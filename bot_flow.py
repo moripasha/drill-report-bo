@@ -25,7 +25,6 @@ STEP_DATE_DAY = "date_day"
 STEP_CHOOSE_SHIFT = "choose_shift"
 STEP_START_DEPTH = "start_depth"
 STEP_END_DEPTH = "end_depth"
-STEP_CONFIRM_LENGTH = "confirm_length"
 STEP_SIZE = "size"
 STEP_MUD = "mud"
 STEP_WATER = "water"
@@ -34,7 +33,6 @@ STEP_ASK_NEXT_SHIFT = "ask_next_shift"
 
 # وقتی شیفت‌ها کامل شدند
 STEP_SHIFTS_DONE = "shifts_done"
-
 
 
 # ================================
@@ -180,9 +178,6 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == STEP_END_DEPTH:
         return await handle_end_depth(update, user_id, text)
 
-    if step == STEP_CONFIRM_LENGTH:
-        return await confirm_length(update, user_id, text)
-
     if step == STEP_WATER:
         return await handle_water(update, user_id, text)
 
@@ -244,7 +239,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await finish_shifts(query, user_id)
 
 
-
 # ============================================================
 #       نمایش خلاصه هدر
 # ============================================================
@@ -296,9 +290,11 @@ async def ask_shift_choice(update_or_query, user_id, only_night=False):
 async def ask_start_depth(update_or_query, user_id):
     user_states[user_id] = STEP_START_DEPTH
     shift = user_data[user_id]["current_shift"]
-    await send_msg(update_or_query,
-                   f"🔹 *متراژ شروع* شیفت {fa_shift(shift)} را وارد کنید:",
-                   None)
+    await send_msg(
+        update_or_query,
+        f"🔹 *متراژ شروع* شیفت {fa_shift(shift)} را وارد کنید:",
+        None
+    )
 
 
 async def handle_start_depth(update, user_id, text):
@@ -319,7 +315,7 @@ async def handle_start_depth(update, user_id, text):
 
 
 # ============================================================
-#       متراژ پایان
+#       متراژ پایان + رفتن به انتخاب سایز با دکمه
 # ============================================================
 
 async def handle_end_depth(update, user_id, text):
@@ -330,23 +326,15 @@ async def handle_end_depth(update, user_id, text):
         return
 
     shift = user_data[user_id]["current_shift"]
+    start_val = user_data[user_id]["shifts"][shift].get("start", 0)
     user_data[user_id]["shifts"][shift]["end"] = val
 
-    length = val - user_data[user_id]["shifts"][shift]["start"]
+    length = val - start_val
     user_data[user_id]["shifts"][shift]["length"] = length
 
-    user_states[user_id] = STEP_CONFIRM_LENGTH
-
-    await update.message.reply_text(
-        f"🔹 متراژ شیفت = {length:.2f} متر\n"
-        "برای ادامه، هرچیزی بفرستید."
-    )
-
-
-async def confirm_length(update, user_id, text):
     user_states[user_id] = STEP_SIZE
 
-    # انتخاب سایز حفاری
+    # دکمه‌های سایز حفاری
     buttons = [
         [InlineKeyboardButton("BQ", callback_data="size_BQ")],
         [InlineKeyboardButton("NQ", callback_data="size_NQ")],
@@ -355,9 +343,12 @@ async def confirm_length(update, user_id, text):
     ]
     markup = InlineKeyboardMarkup(buttons)
 
-    await update.message.reply_text("🔹 *سایز حفاری* را انتخاب کنید:",
-                                    reply_markup=markup,
-                                    parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🔹 متراژ این شیفت = {length:.2f} متر\n\n"
+        "لطفاً *سایز حفاری* را انتخاب کنید:",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
 
 
 # ============================================================
@@ -376,12 +367,17 @@ async def set_size(query, user_id, size):
         [InlineKeyboardButton("CMC", callback_data="mud_cmc")],
         [InlineKeyboardButton("خاک اره", callback_data="mud_sawdust")],
         [InlineKeyboardButton("گازوئیل", callback_data="mud_diesel")],
-        [InlineKeyboardButton("اتمام انتخاب", callback_data="mud_done")],
+        [InlineKeyboardButton("✅ اتمام انتخاب", callback_data="mud_done")],
     ]
     markup = InlineKeyboardMarkup(mud_buttons)
 
-    await query.edit_message_text("🔹 نوع گل حفاری را انتخاب کنید (چندتایی):",
-                                  reply_markup=markup)
+    await query.edit_message_text(
+        "🔹 نوع گل حفاری را انتخاب کنید (می‌توانید چند مورد را انتخاب کنید).\n"
+        "برای *حذف* یک مورد، دوباره روی همان دکمه بزنید.\n"
+        "در پایان، دکمه «✅ اتمام انتخاب» را بزنید.",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
 
 
 async def toggle_mud(query, user_id, mud_key):
@@ -404,8 +400,10 @@ async def toggle_mud(query, user_id, mud_key):
 
     await query.edit_message_text(
         f"🔹 انتخاب فعلی: { ' + '.join(mud_list) if mud_list else 'هیچ'}\n"
-        "🟦 انتخاب کن یا «اتمام انتخاب» را بزن.",
-        reply_markup=query.message.reply_markup
+        "برای حذف یک مورد، دوباره روی همان دکمه بزن.\n"
+        "در پایان، دکمه «✅ اتمام انتخاب» را بزن.",
+        reply_markup=query.message.reply_markup,
+        parse_mode="Markdown"
     )
 
 
