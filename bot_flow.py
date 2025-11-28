@@ -29,7 +29,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
 
     if user_id not in user_states:
-        await update.message.reply_text("برای شروع بنویس: شروع")
+        await update.message.reply_text("برای شروع دستور /start را بزن.")
         return
 
     step = user_states[user_id]
