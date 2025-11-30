@@ -53,7 +53,7 @@ async def start_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==================================
 async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text.strip()
+    text = (update.message.text or "").strip()
 
     if user_id not in user_states:
         await update.message.reply_text("برای شروع /start را بزن.")
@@ -84,7 +84,7 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- زاویه ---
     if step == STEP_ANGLE:
         try:
-            ang = float(text)
+            ang = float(text.replace(",", "."))
         except:
             return await update.message.reply_text("⛔ زاویه باید عدد باشد.")
 
@@ -96,7 +96,6 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == STEP_DATE_YEAR:
         if not text.isdigit():
             return await update.message.reply_text("⛔ سال باید عدد باشد.")
-
         user_data[user_id]["date_year"] = int(text)
         user_states[user_id] = STEP_DATE_MONTH
         return await update.message.reply_text("🔸 ماه:")
@@ -105,7 +104,6 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == STEP_DATE_MONTH:
         if not text.isdigit():
             return await update.message.reply_text("⛔ ماه باید عدد باشد.")
-
         user_data[user_id]["date_month"] = int(text)
         user_states[user_id] = STEP_DATE_DAY
         return await update.message.reply_text("🔸 روز:")
@@ -114,18 +112,14 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == STEP_DATE_DAY:
         if not text.isdigit():
             return await update.message.reply_text("⛔ روز باید عدد باشد.")
-
         day = int(text)
         y = user_data[user_id]["date_year"]
         m = user_data[user_id]["date_month"]
 
         user_data[user_id]["date"] = f"{day:02d}/{m:02d}/{y}"
-
-        # حذف اضافات
         del user_data[user_id]["date_year"]
         del user_data[user_id]["date_month"]
 
-        # خلاصه هدر
         d = user_data[user_id]
         summary = (
             "✅ هدر ثبت شد:\n"
@@ -167,6 +161,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
+    if user_id not in user_states:
+        return await query.edit_message_text("جلسه منقضی شده → /start")
+
     # --- دستگاه ---
     if data.startswith("rig_"):
         user_data[user_id]["rig"] = "DB 1200" if data == "rig_DB1200" else "DBC-S15-A"
@@ -184,13 +181,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         size = data.replace("size_", "")
         return await set_size(query, user_id, size)
 
+    # ✅ اول mud_done را چک می‌کنیم
+    if data == "mud_done":
+        return await ask_water(query, user_id)
+
     # --- گل حفاری (انتخاب / حذف) ---
     if data.startswith("mud_"):
         return await toggle_mud(query, user_id, data.replace("mud_", ""))
-
-    # --- اتمام گل حفاری ---
-    if data == "mud_done":
-        return await ask_water(query, user_id)
 
     # --- ادامه شیفت دوم؟ ---
     if data == "need_night":
@@ -215,7 +212,11 @@ async def ask_shift_choice(update_or_query, user_id, only_night=False):
         ]
     )
 
-    return await send_msg(update_or_query, "🔸 شیفت را انتخاب کنید:", InlineKeyboardMarkup(buttons))
+    return await send_msg(
+        update_or_query,
+        "🔸 شیفت را انتخاب کنید:",
+        InlineKeyboardMarkup(buttons)
+    )
 
 
 # ==================================
@@ -224,12 +225,16 @@ async def ask_shift_choice(update_or_query, user_id, only_night=False):
 async def ask_start_depth(update_or_query, user_id):
     user_states[user_id] = STEP_START_DEPTH
     shift = user_data[user_id]["current_shift"]
-    return await send_msg(update_or_query, f"🔹 متراژ شروع شیفت {fa_shift(shift)}:", None)
+    return await send_msg(
+        update_or_query,
+        f"🔹 متراژ شروع شیفت {fa_shift(shift)}:",
+        None
+    )
 
 
 async def handle_start_depth(update, user_id, text):
     try:
-        val = float(text)
+        val = float(text.replace(",", "."))
     except:
         return await update.message.reply_text("⛔ مقدار نامعتبر.")
 
@@ -237,7 +242,9 @@ async def handle_start_depth(update, user_id, text):
     user_data[user_id]["shifts"][shift]["start"] = val
 
     user_states[user_id] = STEP_END_DEPTH
-    return await update.message.reply_text(f"🔹 متراژ پایان شیفت {fa_shift(shift)}:")
+    return await update.message.reply_text(
+        f"🔹 متراژ پایان شیفت {fa_shift(shift)}:"
+    )
 
 
 # ==================================
@@ -245,7 +252,7 @@ async def handle_start_depth(update, user_id, text):
 # ==================================
 async def handle_end_depth(update, user_id, text):
     try:
-        val = float(text)
+        val = float(text.replace(",", "."))
     except:
         return await update.message.reply_text("⛔ مقدار نامعتبر.")
 
@@ -256,7 +263,6 @@ async def handle_end_depth(update, user_id, text):
     user_data[user_id]["shifts"][shift]["end"] = val
     user_data[user_id]["shifts"][shift]["length"] = length
 
-    # رفتن به سایز
     user_states[user_id] = STEP_SIZE
 
     buttons = [
@@ -290,11 +296,11 @@ async def set_size(query, user_id, size):
         [InlineKeyboardButton("✅ اتمام انتخاب", callback_data="mud_done")],
     ]
 
-    # ❗ پیام جدید (نه ویرایش قبلی)
+    # پیام جدید (نه ویرایش)
     return await query.message.reply_text(
-        "🔹 گل حفاری را انتخاب کنید (چندتایی). \n"
+        "🔹 گل حفاری را انتخاب کنید (چندتایی).\n"
         "برای حذف، دوباره همان گزینه را بزنید.\n"
-        "در پایان «اتمام انتخاب» را بزنید.",
+        "در پایان، «اتمام انتخاب» را بزنید.",
         reply_markup=InlineKeyboardMarkup(mud_btns)
     )
 
@@ -330,7 +336,8 @@ async def toggle_mud(query, user_id, key):
 
     return await query.message.reply_text(
         f"🔹 انتخاب فعلی: { ' + '.join(lst) if lst else 'هیچ'}\n"
-        "برای حذف دوباره بزن — در انتها اتمام انتخاب را بزن.",
+        "برای حذف، دوباره روی همان بزن.\n"
+        "در پایان، «اتمام انتخاب» را بزن.",
         reply_markup=InlineKeyboardMarkup(mud_btns)
     )
 
@@ -349,9 +356,9 @@ async def ask_water(query, user_id):
 
 async def handle_water(update, user_id, text):
     try:
-        val = float(text)
+        val = float(text.replace(",", "."))
     except:
-        return await update.message.reply_text("⛔ مقدار نامعتبر.")
+        return await update.message.reply_text("⛔ مقدار آب نامعتبر.")
 
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["water"] = val
@@ -367,9 +374,9 @@ async def handle_water(update, user_id, text):
 # ==================================
 async def handle_diesel(update, user_id, text):
     try:
-        val = float(text)
+        val = float(text.replace(",", "."))
     except:
-        return await update.message.reply_text("⛔ مقدار نامعتبر.")
+        return await update.message.reply_text("⛔ مقدار گازوئیل نامعتبر.")
 
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["diesel"] = val
