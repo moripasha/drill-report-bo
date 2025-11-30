@@ -1,18 +1,13 @@
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-# ================================
-#  داده‌ها و مرحله‌ها
-# ================================
-
+# ==================================
+# ساختار داده
+# ==================================
 user_states = {}
 user_data = {}
 
-# مراحل هدر
+# مراحل
 STEP_REGION = "region"
 STEP_BOREHOLE = "borehole"
 STEP_RIG = "rig"
@@ -21,7 +16,6 @@ STEP_DATE_YEAR = "date_year"
 STEP_DATE_MONTH = "date_month"
 STEP_DATE_DAY = "date_day"
 
-# مراحل شیفت‌ها
 STEP_CHOOSE_SHIFT = "choose_shift"
 STEP_START_DEPTH = "start_depth"
 STEP_END_DEPTH = "end_depth"
@@ -30,19 +24,15 @@ STEP_MUD = "mud"
 STEP_WATER = "water"
 STEP_DIESEL = "diesel"
 STEP_ASK_NEXT_SHIFT = "ask_next_shift"
-
-# وقتی شیفت‌ها کامل شدند
 STEP_SHIFTS_DONE = "shifts_done"
 
 
-# ================================
-#   شروع فلو
-# ================================
-
+# ==================================
+# شروع فلو
+# ==================================
 async def start_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    user_states[user_id] = STEP_REGION
     user_data[user_id] = {
         "region": None,
         "borehole": None,
@@ -50,188 +40,159 @@ async def start_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "angle_deg": None,
         "date": None,
 
-        "shifts": {
-            "day": {},
-            "night": {},
-        },
+        "shifts": {"day": {}, "night": {}},
         "current_shift": None
     }
 
-    await update.message.reply_text("🔸 لطفاً *منطقه* را وارد کنید:",
-                                    parse_mode="Markdown")
+    user_states[user_id] = STEP_REGION
+    await update.message.reply_text("🔸 لطفاً منطقه را وارد کنید:")
 
 
-# ================================
-#   مدیریت پیام‌های متنی
-# ================================
-
+# ==================================
+# مدیریت پیام‌های متنی
+# ==================================
 async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = (update.message.text or "").strip()
+    text = update.message.text.strip()
 
     if user_id not in user_states:
-        await update.message.reply_text("برای شروع /start را بزنید.")
+        await update.message.reply_text("برای شروع /start را بزن.")
         return
 
     step = user_states[user_id]
 
-    # ----------------------------------
-    #   مراحل هدر
-    # ----------------------------------
-
+    # --- منطقه ---
     if step == STEP_REGION:
         user_data[user_id]["region"] = text
         user_states[user_id] = STEP_BOREHOLE
-        await update.message.reply_text("🔸 *شماره گمانه* را وارد کنید:",
-                                        parse_mode="Markdown")
-        return
+        return await update.message.reply_text("🔸 شماره گمانه را وارد کنید:")
 
+    # --- شماره گمانه ---
     if step == STEP_BOREHOLE:
         user_data[user_id]["borehole"] = text
         user_states[user_id] = STEP_RIG
 
         buttons = [
             [InlineKeyboardButton("DB 1200", callback_data="rig_DB1200")],
-            [InlineKeyboardButton("DBC-S15-A", callback_data="rig_DBC")],
+            [InlineKeyboardButton("DBC-S15-A", callback_data="rig_DBC")]
         ]
-        markup = InlineKeyboardMarkup(buttons)
+        return await update.message.reply_text(
+            "🔸 دستگاه حفاری را انتخاب کن:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
 
-        await update.message.reply_text("🔸 *نوع دستگاه حفاری* را انتخاب کنید:",
-                                        reply_markup=markup,
-                                        parse_mode="Markdown")
-        return
-
+    # --- زاویه ---
     if step == STEP_ANGLE:
         try:
-            angle_val = float(text.replace(",", "."))
-        except ValueError:
-            await update.message.reply_text("⛔ لطفاً زاویه را فقط عدد وارد کنید.")
-            return
+            ang = float(text)
+        except:
+            return await update.message.reply_text("⛔ زاویه باید عدد باشد.")
 
-        user_data[user_id]["angle_deg"] = angle_val
+        user_data[user_id]["angle_deg"] = ang
         user_states[user_id] = STEP_DATE_YEAR
+        return await update.message.reply_text("🔸 سال گزارش:")
 
-        await update.message.reply_text("🔸 سال گزارش را وارد کنید:")
-        return
-
+    # --- سال ---
     if step == STEP_DATE_YEAR:
         if not text.isdigit():
-            await update.message.reply_text("⛔ سال باید عدد باشد.")
-            return
+            return await update.message.reply_text("⛔ سال باید عدد باشد.")
 
-        year = int(text)
-        if year < 1300 or year > 1500:
-            await update.message.reply_text("⛔ سال نامعتبر.")
-            return
-
-        user_data[user_id]["date_year"] = year
+        user_data[user_id]["date_year"] = int(text)
         user_states[user_id] = STEP_DATE_MONTH
-        await update.message.reply_text("🔸 ماه را وارد کنید (۱ تا ۱۲):")
-        return
+        return await update.message.reply_text("🔸 ماه:")
 
+    # --- ماه ---
     if step == STEP_DATE_MONTH:
         if not text.isdigit():
-            await update.message.reply_text("⛔ ماه باید عدد باشد.")
-            return
+            return await update.message.reply_text("⛔ ماه باید عدد باشد.")
 
-        month = int(text)
-        if not 1 <= month <= 12:
-            await update.message.reply_text("⛔ ماه باید بین ۱ تا ۱۲ باشد.")
-            return
-
-        user_data[user_id]["date_month"] = month
+        user_data[user_id]["date_month"] = int(text)
         user_states[user_id] = STEP_DATE_DAY
-        await update.message.reply_text("🔸 روز را وارد کنید (۱ تا ۳۱):")
-        return
+        return await update.message.reply_text("🔸 روز:")
 
+    # --- روز ---
     if step == STEP_DATE_DAY:
         if not text.isdigit():
-            await update.message.reply_text("⛔ روز باید عدد باشد.")
-            return
+            return await update.message.reply_text("⛔ روز باید عدد باشد.")
 
         day = int(text)
-        if not 1 <= day <= 31:
-            await update.message.reply_text("⛔ روز باید بین ۱ تا ۳۱ باشد.")
-            return
+        y = user_data[user_id]["date_year"]
+        m = user_data[user_id]["date_month"]
 
-        year = user_data[user_id]["date_year"]
-        month = user_data[user_id]["date_month"]
+        user_data[user_id]["date"] = f"{day:02d}/{m:02d}/{y}"
 
-        date_str = f"{day:02d}/{month:02d}/{year}"
-        user_data[user_id]["date"] = date_str
-
+        # حذف اضافات
         del user_data[user_id]["date_year"]
         del user_data[user_id]["date_month"]
 
-        # بعد از هدر → شیفت‌ها
-        await show_header_summary(update, user_id)
-        await ask_shift_choice(update, user_id)
-        return
+        # خلاصه هدر
+        d = user_data[user_id]
+        summary = (
+            "✅ هدر ثبت شد:\n"
+            f"• منطقه: {d['region']}\n"
+            f"• گمانه: {d['borehole']}\n"
+            f"• دستگاه: {d['rig']}\n"
+            f"• زاویه: {d['angle_deg']} درجه\n"
+            f"• تاریخ: {d['date']}\n\n"
+            "حالا شیفت را انتخاب کن."
+        )
+        await update.message.reply_text(summary)
+        return await ask_shift_choice(update, user_id)
 
-    # ----------------------------------
-    #   مراحل شیفت‌ها
-    # ----------------------------------
-
+    # --- متراژ شروع ---
     if step == STEP_START_DEPTH:
         return await handle_start_depth(update, user_id, text)
 
+    # --- متراژ پایان ---
     if step == STEP_END_DEPTH:
         return await handle_end_depth(update, user_id, text)
 
+    # --- آب ---
     if step == STEP_WATER:
         return await handle_water(update, user_id, text)
 
+    # --- گازوئیل ---
     if step == STEP_DIESEL:
         return await handle_diesel(update, user_id, text)
 
-    # اگر هیچ‌کدام نبود
-    await update.message.reply_text("⛔ دستور نامعتبر است.")
+    return await update.message.reply_text("⛔ ورودی نامعتبر.")
 
 
-# ================================
-#   دکمه‌های شیشه‌ای (Callback)
-# ================================
-
+# ==================================
+# Callback ها
+# ==================================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
     await query.answer()
 
-    user_id = query.from_user.id
-    data = query.data
-
-    if user_id not in user_states:
-        await query.edit_message_text("جلسه منقضی شده → /start")
-        return
-
-    # انتخاب دستگاه حفاری
+    # --- دستگاه ---
     if data.startswith("rig_"):
-        rig_label = "DB 1200" if data == "rig_DB1200" else "DBC-S15-A"
-        user_data[user_id]["rig"] = rig_label
+        user_data[user_id]["rig"] = "DB 1200" if data == "rig_DB1200" else "DBC-S15-A"
         user_states[user_id] = STEP_ANGLE
+        return await query.edit_message_text("🔸 زاویه حفاری:")
 
-        await query.edit_message_text("🔸 زاویه حفاری را وارد کنید:")
-        return
-
-    # انتخاب شیفت
+    # --- انتخاب شیفت ---
     if data in ("shift_day", "shift_night"):
-        shift_key = "day" if data == "shift_day" else "night"
-        user_data[user_id]["current_shift"] = shift_key
+        shift = "day" if data == "shift_day" else "night"
+        user_data[user_id]["current_shift"] = shift
         return await ask_start_depth(query, user_id)
 
-    # سایز حفاری
+    # --- سایز ---
     if data.startswith("size_"):
         size = data.replace("size_", "")
         return await set_size(query, user_id, size)
 
-    # گل حفاری
+    # --- گل حفاری (انتخاب / حذف) ---
     if data.startswith("mud_"):
         return await toggle_mud(query, user_id, data.replace("mud_", ""))
 
-    # تایید اتمام انتخاب گل حفاری
+    # --- اتمام گل حفاری ---
     if data == "mud_done":
         return await ask_water(query, user_id)
 
-    # آیا شیفت دوم هم بگیرد؟
+    # --- ادامه شیفت دوم؟ ---
     if data == "need_night":
         return await ask_shift_choice(query, user_id, only_night=True)
 
@@ -239,150 +200,111 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await finish_shifts(query, user_id)
 
 
-# ============================================================
-#       نمایش خلاصه هدر
-# ============================================================
-
-async def show_header_summary(update_or_query, user_id):
-    d = user_data[user_id]
-    msg = (
-        "✅ هدر گزارش ثبت شد:\n"
-        f"• منطقه: {d['region']}\n"
-        f"• شماره گمانه: {d['borehole']}\n"
-        f"• دستگاه حفاری: {d['rig']}\n"
-        f"• زاویه: {d['angle_deg']} درجه\n"
-        f"• تاریخ: {d['date']}\n\n"
-        "حالا وارد بخش شیفت‌ها می‌شویم."
-    )
-
-    try:
-        await update_or_query.message.reply_text(msg)
-    except:
-        await update_or_query.edit_message_text(msg)
-
-
-# ============================================================
-#       انتخاب شیفت
-# ============================================================
-
+# ==================================
+#   انتخاب شیفت
+# ==================================
 async def ask_shift_choice(update_or_query, user_id, only_night=False):
     user_states[user_id] = STEP_CHOOSE_SHIFT
 
-    if only_night:
-        buttons = [
-            [InlineKeyboardButton("شیفت شب", callback_data="shift_night")]
-        ]
-    else:
-        buttons = [
+    buttons = (
+        [[InlineKeyboardButton("شیفت شب", callback_data="shift_night")]]
+        if only_night
+        else [
             [InlineKeyboardButton("شیفت روز", callback_data="shift_day")],
             [InlineKeyboardButton("شیفت شب", callback_data="shift_night")],
         ]
-    markup = InlineKeyboardMarkup(buttons)
+    )
 
-    txt = "🔸 لطفاً *شیفت* را انتخاب کنید:"
-    await send_msg(update_or_query, txt, markup)
+    return await send_msg(update_or_query, "🔸 شیفت را انتخاب کنید:", InlineKeyboardMarkup(buttons))
 
 
-# ============================================================
-#       متراژ شروع
-# ============================================================
-
+# ==================================
+# متراژ شروع
+# ==================================
 async def ask_start_depth(update_or_query, user_id):
     user_states[user_id] = STEP_START_DEPTH
     shift = user_data[user_id]["current_shift"]
-    await send_msg(
-        update_or_query,
-        f"🔹 *متراژ شروع* شیفت {fa_shift(shift)} را وارد کنید:",
-        None
-    )
+    return await send_msg(update_or_query, f"🔹 متراژ شروع شیفت {fa_shift(shift)}:", None)
 
 
 async def handle_start_depth(update, user_id, text):
     try:
-        val = float(text.replace(",", "."))
+        val = float(text)
     except:
-        await update.message.reply_text("⛔ مقدار نامعتبر. دوباره وارد کنید.")
-        return
+        return await update.message.reply_text("⛔ مقدار نامعتبر.")
 
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["start"] = val
 
     user_states[user_id] = STEP_END_DEPTH
-    await update.message.reply_text(
-        f"🔹 *متراژ پایان* شیفت {fa_shift(shift)} را وارد کنید:",
-        parse_mode="Markdown"
-    )
+    return await update.message.reply_text(f"🔹 متراژ پایان شیفت {fa_shift(shift)}:")
 
 
-# ============================================================
-#       متراژ پایان + رفتن به انتخاب سایز با دکمه
-# ============================================================
-
+# ==================================
+# متراژ پایان + رفتن مستقیم به سایز
+# ==================================
 async def handle_end_depth(update, user_id, text):
     try:
-        val = float(text.replace(",", "."))
+        val = float(text)
     except:
-        await update.message.reply_text("⛔ مقدار نامعتبر.")
-        return
+        return await update.message.reply_text("⛔ مقدار نامعتبر.")
 
     shift = user_data[user_id]["current_shift"]
-    start_val = user_data[user_id]["shifts"][shift].get("start", 0)
-    user_data[user_id]["shifts"][shift]["end"] = val
+    start = user_data[user_id]["shifts"][shift]["start"]
+    length = val - start
 
-    length = val - start_val
+    user_data[user_id]["shifts"][shift]["end"] = val
     user_data[user_id]["shifts"][shift]["length"] = length
 
+    # رفتن به سایز
     user_states[user_id] = STEP_SIZE
 
-    # دکمه‌های سایز حفاری
     buttons = [
         [InlineKeyboardButton("BQ", callback_data="size_BQ")],
         [InlineKeyboardButton("NQ", callback_data="size_NQ")],
         [InlineKeyboardButton("HQ", callback_data="size_HQ")],
         [InlineKeyboardButton("PQ", callback_data="size_PQ")],
     ]
-    markup = InlineKeyboardMarkup(buttons)
 
-    await update.message.reply_text(
-        f"🔹 متراژ این شیفت = {length:.2f} متر\n\n"
-        "لطفاً *سایز حفاری* را انتخاب کنید:",
-        reply_markup=markup,
-        parse_mode="Markdown"
+    return await update.message.reply_text(
+        f"🔹 متراژ شیفت: {length:.2f} متر\n"
+        f"سایز حفاری را انتخاب کنید:",
+        reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 
-# ============================================================
-#       سایز حفاری
-# ============================================================
-
+# ==================================
+# انتخاب سایز → رفتن به گل حفاری
+# ==================================
 async def set_size(query, user_id, size):
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["size"] = size
 
-    # گل حفاری
     user_states[user_id] = STEP_MUD
 
-    mud_buttons = [
+    mud_btns = [
         [InlineKeyboardButton("سوپرمیکس", callback_data="mud_super")],
         [InlineKeyboardButton("CMC", callback_data="mud_cmc")],
         [InlineKeyboardButton("خاک اره", callback_data="mud_sawdust")],
         [InlineKeyboardButton("گازوئیل", callback_data="mud_diesel")],
         [InlineKeyboardButton("✅ اتمام انتخاب", callback_data="mud_done")],
     ]
-    markup = InlineKeyboardMarkup(mud_buttons)
 
-    await query.edit_message_text(
-        "🔹 نوع گل حفاری را انتخاب کنید (می‌توانید چند مورد را انتخاب کنید).\n"
-        "برای *حذف* یک مورد، دوباره روی همان دکمه بزنید.\n"
-        "در پایان، دکمه «✅ اتمام انتخاب» را بزنید.",
-        reply_markup=markup,
-        parse_mode="Markdown"
+    # ❗ پیام جدید (نه ویرایش قبلی)
+    return await query.message.reply_text(
+        "🔹 گل حفاری را انتخاب کنید (چندتایی). \n"
+        "برای حذف، دوباره همان گزینه را بزنید.\n"
+        "در پایان «اتمام انتخاب» را بزنید.",
+        reply_markup=InlineKeyboardMarkup(mud_btns)
     )
 
 
-async def toggle_mud(query, user_id, mud_key):
+# ==================================
+# انتخاب / حذف گل حفاری
+# ==================================
+async def toggle_mud(query, user_id, key):
     shift = user_data[user_id]["current_shift"]
-    mud_list = user_data[user_id]["shifts"][shift].setdefault("mud", [])
+    lst = user_data[user_id]["shifts"][shift].setdefault("mud", [])
 
     translate = {
         "super": "سوپرمیکس",
@@ -391,86 +313,83 @@ async def toggle_mud(query, user_id, mud_key):
         "diesel": "گازوئیل",
     }
 
-    mud_name = translate[mud_key]
+    val = translate[key]
 
-    if mud_name in mud_list:
-        mud_list.remove(mud_name)
+    if val in lst:
+        lst.remove(val)
     else:
-        mud_list.append(mud_name)
+        lst.append(val)
 
-    await query.edit_message_text(
-        f"🔹 انتخاب فعلی: { ' + '.join(mud_list) if mud_list else 'هیچ'}\n"
-        "برای حذف یک مورد، دوباره روی همان دکمه بزن.\n"
-        "در پایان، دکمه «✅ اتمام انتخاب» را بزن.",
-        reply_markup=query.message.reply_markup,
-        parse_mode="Markdown"
+    mud_btns = [
+        [InlineKeyboardButton("سوپرمیکس", callback_data="mud_super")],
+        [InlineKeyboardButton("CMC", callback_data="mud_cmc")],
+        [InlineKeyboardButton("خاک اره", callback_data="mud_sawdust")],
+        [InlineKeyboardButton("گازوئیل", callback_data="mud_diesel")],
+        [InlineKeyboardButton("✅ اتمام انتخاب", callback_data="mud_done")],
+    ]
+
+    return await query.message.reply_text(
+        f"🔹 انتخاب فعلی: { ' + '.join(lst) if lst else 'هیچ'}\n"
+        "برای حذف دوباره بزن — در انتها اتمام انتخاب را بزن.",
+        reply_markup=InlineKeyboardMarkup(mud_btns)
     )
 
 
-# ============================================================
-#       آب مصرفی
-# ============================================================
-
+# ==================================
+# آب مصرفی
+# ==================================
 async def ask_water(query, user_id):
     user_states[user_id] = STEP_WATER
     shift = user_data[user_id]["current_shift"]
 
-    await query.edit_message_text(
-        f"🔹 *مقدار آب مصرفی* شیفت {fa_shift(shift)} را وارد کنید (لیتر):",
-        parse_mode="Markdown"
+    return await query.message.reply_text(
+        f"🔹 مقدار آب مصرفی شیفت {fa_shift(shift)} (لیتر):"
     )
 
 
 async def handle_water(update, user_id, text):
     try:
-        val = float(text.replace(",", "."))
+        val = float(text)
     except:
-        await update.message.reply_text("⛔ مقدار آب نامعتبر.")
-        return
+        return await update.message.reply_text("⛔ مقدار نامعتبر.")
 
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["water"] = val
 
     user_states[user_id] = STEP_DIESEL
-    await update.message.reply_text(
-        f"🔹 *مقدار گازوئیل* شیفت {fa_shift(shift)} را وارد کنید (لیتر):",
-        parse_mode="Markdown"
+    return await update.message.reply_text(
+        f"🔹 مقدار گازوئیل شیفت {fa_shift(shift)} (لیتر):"
     )
 
 
-# ============================================================
-#       گازوئیل
-# ============================================================
-
+# ==================================
+# گازوئیل
+# ==================================
 async def handle_diesel(update, user_id, text):
     try:
-        val = float(text.replace(",", "."))
+        val = float(text)
     except:
-        await update.message.reply_text("⛔ مقدار گازوئیل نامعتبر.")
-        return
+        return await update.message.reply_text("⛔ مقدار نامعتبر.")
 
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["diesel"] = val
 
-    # بعد از پایان شیفت → پرسیدن درباره شیفت دوم
     user_states[user_id] = STEP_ASK_NEXT_SHIFT
 
     buttons = [
-        [InlineKeyboardButton("شیفت بعدی (شب)", callback_data="need_night")],
+        [InlineKeyboardButton("ثبت شیفت شب", callback_data="need_night")],
         [InlineKeyboardButton("خیر، ادامه بده", callback_data="no_more_shift")],
     ]
-    markup = InlineKeyboardMarkup(buttons)
 
-    await update.message.reply_text(
-        "🔸 آیا شیفت دیگری هم باید ثبت شود؟",
-        reply_markup=markup
+    return await update.message.reply_text(
+        "🔸 شیفت دیگری هم هست؟",
+        reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 
-# ============================================================
-#   اتمام شیفت‌ها
-# ============================================================
-
+# ==================================
+# پایان شیفت‌ها
+# ==================================
 async def finish_shifts(query, user_id):
     user_states[user_id] = STEP_SHIFTS_DONE
 
@@ -480,27 +399,24 @@ async def finish_shifts(query, user_id):
     total_water = (d["day"].get("water", 0) or 0) + (d["night"].get("water", 0) or 0)
     total_diesel = (d["day"].get("diesel", 0) or 0) + (d["night"].get("diesel", 0) or 0)
 
-    msg = (
-        "🔰 **جمع‌بندی شیفت‌ها:**\n"
-        f"• مجموع متراژ: {total_len:.2f} متر\n"
-        f"• مجموع آب مصرفی: {total_water:.2f} لیتر\n"
-        f"• مجموع گازوئیل: {total_diesel:.2f} لیتر\n\n"
-        "🔜 مرحلهٔ بعد: مسئول شیفت و پرسنل کمکی + توضیحات + PDF"
+    return await query.edit_message_text(
+        f"🔰 **جمع‌بندی شیفت‌ها:**\n"
+        f"• مجموع متراژ = {total_len:.2f} متر\n"
+        f"• مجموع آب = {total_water:.2f} لیتر\n"
+        f"• مجموع گازوئیل = {total_diesel:.2f} لیتر\n\n"
+        "مرحله بعد: مسئول شیفت + پرسنل کمکی + توضیحات + PDF"
     )
 
-    await query.edit_message_text(msg, parse_mode="Markdown")
 
-
-# ============================================================
-#   توابع کمکی
-# ============================================================
-
+# ==================================
+# ابزارها
+# ==================================
 def fa_shift(key):
     return "روز" if key == "day" else "شب"
 
 
 async def send_msg(update_or_query, text, markup=None):
     try:
-        await update_or_query.message.reply_text(text, reply_markup=markup)
+        return await update_or_query.message.reply_text(text, reply_markup=markup)
     except:
-        await update_or_query.edit_message_text(text, reply_markup=markup)
+        return await update_or_query.edit_message_text(text, reply_markup=markup)
