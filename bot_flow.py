@@ -2,14 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 # ==========================
-# تنظیمات
-# ==========================
-
-MAX_DESCRIPTION_CHARS = 8000  # سقف تقریبی کاراکترهای توضیحات
-
-
-# ==========================
-# ساختار داده
+# ساختار داده و مراحل
 # ==========================
 
 user_states = {}
@@ -37,10 +30,17 @@ STEP_SIZE = "size"
 STEP_MUD = "mud"
 STEP_WATER = "water"
 STEP_DIESEL = "diesel"
-STEP_ASK_NEXT_SHIFT = "ask_next_shift"
+STEP_SHIFT_REVIEW = "shift_review"
+STEP_EDIT_FIELD = "edit_field"
 
 # مرحله توضیحات
 STEP_NOTES = "notes"
+
+# مرحله پرسش برای شیفت بعدی
+STEP_ASK_NEXT_SHIFT = "ask_next_shift"
+
+# مرحله پایان
+STEP_DONE = "done"
 
 
 # ==========================
@@ -58,13 +58,35 @@ async def start_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "date": None,
 
         "shifts": {
-            "day": {},
-            "night": {},
+            "day": {
+                "supervisors": [],
+                "helpers": [],
+                "workshop_bosses": [],
+                "start": None,
+                "end": None,
+                "length": None,
+                "size": None,
+                "mud": [],
+                "water": None,
+                "diesel": None,
+                "notes": "",
+            },
+            "night": {
+                "supervisors": [],
+                "helpers": [],
+                "workshop_bosses": [],
+                "start": None,
+                "end": None,
+                "length": None,
+                "size": None,
+                "mud": [],
+                "water": None,
+                "diesel": None,
+                "notes": "",
+            },
         },
         "current_shift": None,
-
-        "desc_max": MAX_DESCRIPTION_CHARS,
-        "description": "",
+        "edit_field": None,  # برای ویرایش متراژ/آب/گازوئیل
     }
 
     user_states[user_id] = STEP_REGION
@@ -159,11 +181,10 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(summary)
         return await ask_shift_choice(update, user_id)
 
-    # --- مسئول شیفت‌ها (ممکن است چند نفر باشد) ---
+    # --- مسئول/مسئولین شیفت ---
     if step == STEP_SHIFT_SUPERVISORS:
         shift = user_data[user_id]["current_shift"]
-        supervisors = split_names(text)
-        user_data[user_id]["shifts"][shift]["supervisors"] = supervisors
+        user_data[user_id]["shifts"][shift]["supervisors"] = split_names(text)
         user_states[user_id] = STEP_SHIFT_HELPERS
         return await update.message.reply_text(
             f"🔹 نام پرسنل کمکی شیفت {fa_shift(shift)} را وارد کن "
@@ -173,19 +194,16 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- پرسنل کمکی ---
     if step == STEP_SHIFT_HELPERS:
         shift = user_data[user_id]["current_shift"]
-        helpers = split_names(text)
-        user_data[user_id]["shifts"][shift]["helpers"] = helpers
+        user_data[user_id]["shifts"][shift]["helpers"] = split_names(text)
         user_states[user_id] = STEP_SHIFT_WORKSHOP
         return await update.message.reply_text(
             f"🔹 نام سرپرست کارگاه برای شیفت {fa_shift(shift)} (اگر دو نفرند، با «،» جدا کن):"
         )
 
-    # --- سرپرست کارگاه (۱ یا چند نفر) ---
+    # --- سرپرست کارگاه ---
     if step == STEP_SHIFT_WORKSHOP:
         shift = user_data[user_id]["current_shift"]
-        workshop_bosses = split_names(text)
-        user_data[user_id]["shifts"][shift]["workshop_bosses"] = workshop_bosses
-        # بعد از اسامی، می‌رویم سر متراژ
+        user_data[user_id]["shifts"][shift]["workshop_bosses"] = split_names(text)
         return await ask_start_depth(update, user_id)
 
     # --- متراژ شروع ---
@@ -204,9 +222,16 @@ async def flow_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if step == STEP_DIESEL:
         return await handle_diesel(update, user_id, text)
 
-    # --- توضیحات ---
+    # --- ویرایش یک فیلد از شیفت ---
+    if step == STEP_EDIT_FIELD:
+        return await handle_edit_field(update, user_id, text)
+
+    # --- توضیحات (برای شیفت روز یا شب) ---
     if step == STEP_NOTES:
         return await handle_notes(update, user_id, text)
+
+    if step == STEP_DONE:
+        return await update.message.reply_text("گزارش ثبت شده است. برای گزارش جدید /start را بزن.")
 
     return await update.message.reply_text("⛔ ورودی نامعتبر.")
 
@@ -236,24 +261,50 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[user_id]["current_shift"] = shift
         user_states[user_id] = STEP_SHIFT_SUPERVISORS
         return await query.edit_message_text(
-            f"🔹 نام مسئول شیفت حفاری ({fa_shift(shift)}) را وارد کن "
-            "(اگر دو نفرند، با «،» جدا کن):"
+            f"🔹 نام مسئول یا مسئولین شیفت {fa_shift(shift)} را وارد کن "
+            "(اگر چند نفرند، با «،» جدا کن):"
         )
 
-    # --- سایز ---
+    # --- سایز حفاری ---
     if data.startswith("size_"):
         size = data.replace("size_", "")
         return await set_size(query, user_id, size)
 
-    # ✅ اول mud_done را چک می‌کنیم
+    # --- پایان انتخاب گل حفاری ---
     if data == "mud_done":
         return await ask_water(query, user_id)
 
-    # --- گل حفاری (انتخاب / حذف) ---
+    # --- انتخاب/حذف گل حفاری ---
     if data.startswith("mud_"):
         return await toggle_mud(query, user_id, data.replace("mud_", ""))
 
-    # --- ادامه شیفت دوم؟ ---
+    # --- تأیید شیفت (روز یا شب) ---
+    if data in ("shift_ok_day", "shift_ok_night"):
+        shift = "day" if data == "shift_ok_day" else "night"
+        user_data[user_id]["current_shift"] = shift
+        user_states[user_id] = STEP_NOTES
+        return await query.edit_message_text(
+            f"📝 توضیحات شیفت {fa_shift(shift)} را بنویس."
+        )
+
+    # --- ویرایش فیلدهای شیفت ---
+    if data in ("edit_start", "edit_end", "edit_water", "edit_diesel"):
+        field = data.replace("edit_", "")
+        user_data[user_id]["edit_field"] = field
+        user_states[user_id] = STEP_EDIT_FIELD
+
+        names = {
+            "start": "متراژ شروع",
+            "end": "متراژ پایان",
+            "water": "مقدار آب مصرفی (لیتر)",
+            "diesel": "مقدار گازوئیل (لیتر)",
+        }
+        shift = user_data[user_id]["current_shift"]
+        return await query.edit_message_text(
+            f"✏️ مقدار جدید {names[field]} برای شیفت {fa_shift(shift)} را وارد کن:"
+        )
+
+    # --- بعد از توضیحات: آیا شیفت شب هم هست؟ ---
     if data == "need_night":
         return await ask_shift_choice(query, user_id, only_night=True)
 
@@ -262,7 +313,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================
-#   انتخاب شیفت
+# انتخاب شیفت
 # ==========================
 
 async def ask_shift_choice(update_or_query, user_id, only_night: bool = False):
@@ -435,7 +486,7 @@ async def handle_water(update, user_id, text):
 
 
 # ==========================
-# گازوئیل
+# گازوئیل → خلاصه و امکان ویرایش
 # ==========================
 
 async def handle_diesel(update, user_id, text):
@@ -447,40 +498,123 @@ async def handle_diesel(update, user_id, text):
     shift = user_data[user_id]["current_shift"]
     user_data[user_id]["shifts"][shift]["diesel"] = val
 
-    shifts = user_data[user_id]["shifts"]
+    # بعد از کامل شدن داده‌ها، خلاصه شیفت و دکمه‌های ویرایش
+    return await ask_shift_review(update, user_id)
 
-    # اگر این شیفت شب است → مستقیم جمع‌بندی و رفتن به توضیحات
-    if shift == "night":
-        return await finish_shifts_text(update, user_id)
 
-    # اگر روز است و قبلاً شب هم طول دارد → جمع‌بندی
-    if shift == "day" and shifts["night"].get("length") is not None:
-        return await finish_shifts_text(update, user_id)
+async def ask_shift_review(update_or_query, user_id):
+    shift = user_data[user_id]["current_shift"]
+    sh = user_data[user_id]["shifts"][shift]
+    user_states[user_id] = STEP_SHIFT_REVIEW
 
-    # در غیر این صورت، بپرس شیفت شب هم هست؟
-    user_states[user_id] = STEP_ASK_NEXT_SHIFT
+    sup = "، ".join(sh["supervisors"]) if sh["supervisors"] else "-"
+    helpers = "، ".join(sh["helpers"]) if sh["helpers"] else "-"
+    bosses = "، ".join(sh["workshop_bosses"]) if sh["workshop_bosses"] else "-"
+    mud = " + ".join(sh["mud"]) if sh["mud"] else "-"
+
+    msg = (
+        f"🔍 خلاصه شیفت {fa_shift(shift)}:\n"
+        f"• مسئول(ین) شیفت: {sup}\n"
+        f"• پرسنل کمکی: {helpers}\n"
+        f"• سرپرست کارگاه: {bosses}\n"
+        f"• متراژ شروع: {sh['start']} متر\n"
+        f"• متراژ پایان: {sh['end']} متر\n"
+        f"• متراژ شیفت: {sh['length']:.2f} متر\n"
+        f"• سایز حفاری: {sh['size']}\n"
+        f"• گل حفاری: {mud}\n"
+        f"• آب مصرفی: {sh['water']} لیتر\n"
+        f"• گازوئیل: {sh['diesel']} لیتر\n\n"
+        "اگر موردی اشتباه است، گزینه ویرایش را بزن."
+    )
 
     buttons = [
-        [InlineKeyboardButton("ثبت شیفت شب", callback_data="need_night")],
-        [InlineKeyboardButton("خیر، ادامه بده", callback_data="no_more_shift")],
+        [
+            InlineKeyboardButton(
+                f"✅ تأیید شیفت {fa_shift(shift)}",
+                callback_data=f"shift_ok_{shift}",
+            )
+        ],
+        [
+            InlineKeyboardButton("✏️ ویرایش متراژ شروع", callback_data="edit_start"),
+            InlineKeyboardButton("✏️ ویرایش متراژ پایان", callback_data="edit_end"),
+        ],
+        [
+            InlineKeyboardButton("✏️ ویرایش آب", callback_data="edit_water"),
+            InlineKeyboardButton("✏️ ویرایش گازوئیل", callback_data="edit_diesel"),
+        ],
     ]
 
-    return await update.message.reply_text(
-        "🔸 شیفت دیگری هم هست؟",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+    markup = InlineKeyboardMarkup(buttons)
+    return await send_msg(update_or_query, msg, markup)
 
 
 # ==========================
-# پایان شیفت‌ها + محاسبه ظرفیت توضیحات
+# ویرایش فیلدهای شیفت
+# ==========================
+
+async def handle_edit_field(update: Update, user_id: int, text: str):
+    field = user_data[user_id].get("edit_field")
+    shift = user_data[user_id]["current_shift"]
+    sh = user_data[user_id]["shifts"][shift]
+
+    try:
+        val = float(text.replace(",", "."))
+    except ValueError:
+        return await update.message.reply_text("⛔ مقدار عددی نامعتبر است. دوباره وارد کن.")
+
+    if field == "start":
+        sh["start"] = val
+        if sh["end"] is not None:
+            sh["length"] = sh["end"] - sh["start"]
+    elif field == "end":
+        sh["end"] = val
+        if sh["start"] is not None:
+            sh["length"] = sh["end"] - sh["start"]
+    elif field == "water":
+        sh["water"] = val
+    elif field == "diesel":
+        sh["diesel"] = val
+
+    user_states[user_id] = STEP_SHIFT_REVIEW
+    return await ask_shift_review(update, user_id)
+
+
+# ==========================
+# توضیحات هر شیفت
+# ==========================
+
+async def handle_notes(update: Update, user_id: int, text: str):
+    shift = user_data[user_id]["current_shift"]
+    user_data[user_id]["shifts"][shift]["notes"] = text
+
+    # اگر شیفت روز است → بپرس آیا شیفت شب هم هست؟
+    if shift == "day":
+        user_states[user_id] = STEP_ASK_NEXT_SHIFT
+        buttons = [
+            [InlineKeyboardButton("بله، شیفت شب داریم", callback_data="need_night")],
+            [InlineKeyboardButton("خیر، فقط همین شیفت", callback_data="no_more_shift")],
+        ]
+        markup = InlineKeyboardMarkup(buttons)
+        return await update.message.reply_text(
+            "آیا شیفت شب هم باید ثبت شود؟",
+            reply_markup=markup,
+        )
+
+    # اگر شیفت شب است → مستقیم جمع‌بندی نهایی
+    if shift == "night":
+        return await finish_shifts_text(update, user_id)
+
+
+# ==========================
+# پایان شیفت‌ها + پیش‌نمایش
 # ==========================
 
 def build_shifts_summary(user_id: int) -> str:
     d = user_data[user_id]["shifts"]
 
-    total_len = (d["day"].get("length", 0) or 0) + (d["night"].get("length", 0) or 0)
-    total_water = (d["day"].get("water", 0) or 0) + (d["night"].get("water", 0) or 0)
-    total_diesel = (d["day"].get("diesel", 0) or 0) + (d["night"].get("diesel", 0) or 0)
+    total_len = (d["day"]["length"] or 0) + (d["night"]["length"] or 0)
+    total_water = (d["day"]["water"] or 0) + (d["night"]["water"] or 0)
+    total_diesel = (d["day"]["diesel"] or 0) + (d["night"]["diesel"] or 0)
 
     msg = (
         "🔰 **جمع‌بندی شیفت‌ها:**\n"
@@ -491,92 +625,71 @@ def build_shifts_summary(user_id: int) -> str:
     return msg
 
 
-def calc_description_budget(user_id: int) -> int:
-    shifts = user_data[user_id]["shifts"]
-    total_chars = 0
+def build_full_preview(user_id: int) -> str:
+    d = user_data[user_id]
+    s = d["shifts"]
+
+    lines = []
+    lines.append("🧾 پیش‌نمایش گزارش روزانه")
+    lines.append("────────────────────")
+    lines.append(f"منطقه: {d['region']}")
+    lines.append(f"شماره گمانه: {d['borehole']}")
+    lines.append(f"دستگاه حفاری: {d['rig']}")
+    lines.append(f"زاویه: {d['angle_deg']} درجه")
+    lines.append(f"تاریخ: {d['date']}")
+    lines.append("")
 
     for key in ("day", "night"):
-        sh = shifts.get(key, {})
-        if not sh:
+        sh = s[key]
+        if sh["start"] is None:
             continue
 
-        sup = sh.get("supervisors", [])
-        helpers = sh.get("helpers", [])
-        bosses = sh.get("workshop_bosses", [])
+        lines.append(f"─── شیفت {fa_shift(key)} ───")
+        sup = "، ".join(sh["supervisors"]) if sh["supervisors"] else "-"
+        helpers = "، ".join(sh["helpers"]) if sh["helpers"] else "-"
+        bosses = "، ".join(sh["workshop_bosses"]) if sh["workshop_bosses"] else "-"
+        mud = " + ".join(sh["mud"]) if sh["mud"] else "-"
 
-        if isinstance(sup, str):
-            sup = [sup]
-        if isinstance(helpers, str):
-            helpers = [helpers]
-        if isinstance(bosses, str):
-            bosses = [bosses]
+        lines.append(f"مسئول(ین) شیفت: {sup}")
+        lines.append(f"پرسنل کمکی: {helpers}")
+        lines.append(f"سرپرست کارگاه: {bosses}")
+        lines.append(f"متراژ شروع: {sh['start']} متر")
+        lines.append(f"متراژ پایان: {sh['end']} متر")
+        lines.append(f"متراژ شیفت: {sh['length']:.2f} متر")
+        lines.append(f"سایز حفاری: {sh['size']}")
+        lines.append(f"گل حفاری: {mud}")
+        lines.append(f"آب مصرفی: {sh['water']} لیتر")
+        lines.append(f"گازوئیل: {sh['diesel']} لیتر")
+        lines.append(f"توضیحات شیفت {fa_shift(key)}:")
+        lines.append(sh["notes"] or "-")
+        lines.append("")
 
-        concat = "،".join(sup + helpers + bosses)
-        total_chars += len(concat)
-
-    remaining = MAX_DESCRIPTION_CHARS - total_chars
-    return remaining if remaining > 0 else 0
+    return "\n".join(lines)
 
 
 async def finish_shifts_callback(query, user_id):
+    user_states[user_id] = STEP_DONE
     summary = build_shifts_summary(user_id)
-    desc_limit = calc_description_budget(user_id)
-    user_data[user_id]["desc_max"] = desc_limit
-    user_states[user_id] = STEP_NOTES
+    preview = build_full_preview(user_id)
 
     await query.edit_message_text(summary, parse_mode="Markdown")
-    return await query.message.reply_text(
-        f"📝 حالا متن *توضیحات* را بنویس.\n"
-        f"ظرفیت تقریبی قابل استفاده: {desc_limit} کاراکتر.",
-        parse_mode="Markdown",
+    await query.message.reply_text(preview)
+    await query.message.reply_text(
+        "✅ گزارش ثبت شد.\n"
+        "در نسخهٔ بعدی، تولید و ارسال PDF روی قالب فرم هم اضافه می‌شود."
     )
 
 
 async def finish_shifts_text(update, user_id):
+    user_states[user_id] = STEP_DONE
     summary = build_shifts_summary(user_id)
-    desc_limit = calc_description_budget(user_id)
-    user_data[user_id]["desc_max"] = desc_limit
-    user_states[user_id] = STEP_NOTES
+    preview = build_full_preview(user_id)
 
     await update.message.reply_text(summary, parse_mode="Markdown")
-    return await update.message.reply_text(
-        f"📝 حالا متن *توضیحات* را بنویس.\n"
-        f"ظرفیت تقریبی قابل استفاده: {desc_limit} کاراکتر.",
-        parse_mode="Markdown",
-    )
-
-
-# ==========================
-# توضیحات
-# ==========================
-
-async def handle_notes(update: Update, user_id: int, text: str):
-    limit = user_data[user_id].get("desc_max", MAX_DESCRIPTION_CHARS)
-    length = len(text)
-
-    if limit == 0:
-        # جا نداریم، ولی متن را نگه می‌داریم برای بعداً اگر لازم شد
-        user_data[user_id]["description"] = ""
-        await update.message.reply_text(
-            "⚠️ طبق محاسبهٔ اسامی، فضای توضیحات تقریباً پر است.\n"
-            "توضیحات ذخیره نشد، اما می‌توانیم در نسخه بعدی PDF، چیدمان را بهینه کنیم."
-        )
-        return
-
-    if length > limit:
-        trimmed = text[:limit]
-        user_data[user_id]["description"] = trimmed
-        await update.message.reply_text(
-            f"⚠️ توضیحاتت {length} کاراکتر بود، ولی حدوداً {limit} کاراکتر جا داشتیم.\n"
-            "متن به اندازه مجاز کوتاه و ذخیره شد."
-        )
-    else:
-        user_data[user_id]["description"] = text
-        await update.message.reply_text("✅ توضیحات ذخیره شد.")
-
-    # اینجا در نسخه بعدی PDF ساخته و ارسال خواهد شد
+    await update.message.reply_text(preview)
     await update.message.reply_text(
-        "📄 در مرحلهٔ بعد، PDF نهایی فرم روی قالب اسکن‌شده ساخته و برایت ارسال می‌شود."
+        "✅ گزارش ثبت شد.\n"
+        "در نسخهٔ بعدی، تولید و ارسال PDF روی قالب فرم هم اضافه می‌شود."
     )
 
 
@@ -589,7 +702,6 @@ def fa_shift(key: str) -> str:
 
 
 def split_names(raw: str):
-    # جدا کردن اسامی با , یا ،
     parts = [p.strip() for p in raw.replace("،", ",").split(",")]
     return [p for p in parts if p]
 
