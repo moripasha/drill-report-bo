@@ -2,39 +2,71 @@ from io import BytesIO
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
 
+# -------------------------------
+# تنظیمات گرید مفهومی فرم
+# -------------------------------
+
+# تعداد ستون‌ها و ردیف‌ها در مدل ذهنی ما
+# عددها رو طوری انتخاب کردم که مختصات تو (تا حدود 45 در ستون) جا بشه
+GRID_COLS = 50
+GRID_ROWS = 60
+
+
+def grid_to_xy(col: int, row: int, width: float, height: float,
+               margin_x: float = 20, margin_y: float = 20):
+    """
+    col, row : شماره ستون از راست و ردیف از بالا (همونی که خودت گفتی)
+    خروجی : مختصات x, y روی PDF
+    """
+    usable_w = width - 2 * margin_x
+    usable_h = height - 2 * margin_y
+
+    cell_w = usable_w / GRID_COLS
+    cell_h = usable_h / GRID_ROWS
+
+    # چون ستون‌ها رو از راست می‌شمریم، x رو از سمت راست حساب می‌کنیم
+    x = width - margin_x - (col + 0.5) * cell_w
+    # ردیف‌ها از بالا به پایین
+    y = height - margin_y - (row + 0.5) * cell_h
+
+    return x, y
+
+
+# موقعیت هدر بر اساس گریدی که تو دادی
+HEADER_POSITIONS = {
+    "region": {"col": 5, "row": 8, "align": "right"},  # RGN فارسی → راست‌چین
+    "borehole": {"col": 16, "row": 8, "align": "left"},  # BH انگلیسی/عددی
+    "rig": {"col": 31, "row": 8, "align": "left"},
+    "angle": {"col": 40, "row": 8, "align": "left"},
+    "date": {"col": 45, "row": 8, "align": "left"},
+}
+
 
 def _txt(v):
-    """برای تبدیل None به رشته خالی و جلوگیری از خراب شدن متن."""
     if v is None:
         return ""
     return str(v)
 
 
 def split_text(text: str, max_len: int = 90):
-    """
-    یک wrap خیلی ساده بر اساس طول کاراکتر.
-    برای دمو کاملاً کافی است.
-    """
     if not text:
         return []
-
     lines = []
-    current = ""
+    cur = ""
     for ch in text:
-        current += ch
-        # وقتی طول خط از max_len گذشت و به یک جداکننده رسیدیم، خط را می‌بندیم
-        if len(current) >= max_len and ch in (" ", "،", ".", "؛", ","):
-            lines.append(current.strip())
-            current = ""
-    if current.strip():
-        lines.append(current.strip())
+        cur += ch
+        if len(cur) >= max_len and ch in (" ", "،", ".", "؛", ","):
+            lines.append(cur.strip())
+            cur = ""
+    if cur.strip():
+        lines.append(cur.strip())
     return lines
 
 
 def generate_pdf(report_data: dict) -> bytes:
     """
-    report_data همان user_data[user_id] است که در bot_flow نگه می‌داریم.
-    خروجی: بایت‌های PDF برای ارسال در تلگرام.
+    report_data = همون user_data[user_id] توی bot_flow
+    خروجی: بایت‌های PDF
     """
 
     buffer = BytesIO()
@@ -44,19 +76,14 @@ def generate_pdf(report_data: dict) -> bytes:
     c = canvas.Canvas(buffer, pagesize=page_size)
     width, height = page_size
 
-    # حاشیه‌ها
-    margin_x = 40
-    margin_y = 40
-
-    # عنوان اصلی بالا
-    title = "گزارش روزانه عملکرد حفاری (پیمانکار: GEOKAN)"
+    # عنوان بالا (اختیاری – برای دمو)
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(margin_x, height - margin_y, title)
+    title = "گزارش روزانه عملکرد حفاری (پیمانکار: GEOKAN)"
+    c.drawString(40, height - 30, title)
 
-    # هدر: منطقه، گمانه، دستگاه، زاویه، تاریخ
-    c.setFont("Helvetica", 11)
-    y = height - margin_y - 25
-
+    # -------------------------
+    # هدر بر اساس گرید تو
+    # -------------------------
     region = _txt(report_data.get("region"))
     borehole = _txt(report_data.get("borehole"))
     rig = _txt(report_data.get("rig"))
@@ -64,47 +91,59 @@ def generate_pdf(report_data: dict) -> bytes:
     angle_str = f"{angle} درجه" if angle is not None else ""
     date_str = _txt(report_data.get("date"))
 
-    # ردیف اول هدر
-    c.drawString(margin_x, y, f"منطقه: {region}")
-    c.drawString(margin_x + 260, y, f"شماره گمانه: {borehole}")
-    y -= 18
+    header_values = {
+        "region": f"منطقه: {region}",
+        "borehole": f"شماره گمانه: {borehole}",
+        "rig": f"دستگاه حفاری: {rig}",
+        "angle": f"زاویه: {angle_str}",
+        "date": f"تاریخ: {date_str}",
+    }
 
-    # ردیف دوم هدر
-    c.drawString(margin_x, y, f"دستگاه حفاری: {rig}")
-    c.drawString(margin_x + 260, y, f"زاویه: {angle_str}")
-    y -= 18
+    c.setFont("Helvetica", 10)
 
-    # ردیف سوم هدر
-    c.drawString(margin_x, y, f"تاریخ: {date_str}")
-    y -= 15
+    for key, cfg in HEADER_POSITIONS.items():
+        col = cfg["col"]
+        row = cfg["row"]
+        align = cfg.get("align", "left")
+        x, y = grid_to_xy(col, row, width, height)
 
-    # خط جداکننده
-    c.line(margin_x, y, width - margin_x, y)
-    y -= 10
+        text = header_values.get(key, "")
+        if not text:
+            continue
 
-    # داده‌های شیفت‌ها
+        if align == "right":
+            c.drawRightString(x, y, text)
+        else:
+            c.drawString(x, y, text)
+
+    # -------------------------
+    # بقیهٔ محتوا (شیفت‌ها و توضیحات)
+    # این قسمت هنوز گریدی نیست و ساده روی صفحه چیده شده
+    # هدف فعلی: فقط تست هدر با گرید
+    # -------------------------
+
     shifts = report_data.get("shifts", {})
     day = shifts.get("day", {}) or {}
     night = shifts.get("night", {}) or {}
 
-    # عنوان جدول پارامترهای حفاری
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin_x, y, "مشخصات شیفت‌ها")
-    y -= 5
-    c.setLineWidth(0.8)
-    c.line(margin_x, y, width - margin_x, y)
-    y -= 15
+    # نقطه شروع جدول پایین‌تر از هدر
+    y_table = height - 120
 
-    # جدول ساده برای شیفت روز و شب کنار هم (روش ۱: روبه‌روی عنوان‌ها)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y_table, "مشخصات شیفت‌ها")
+    y_table -= 15
+    c.setLineWidth(0.7)
+    c.line(40, y_table, width - 40, y_table)
+    y_table -= 18
+
+    col1_x = 50
+    col2_x = 220
+    col3_x = 420
+
     c.setFont("Helvetica-Bold", 10)
-
-    col1_x = margin_x + 10          # ستون عنوان فارسی
-    col2_x = margin_x + 140         # مقدار شیفت روز
-    col3_x = margin_x + 330         # مقدار شیفت شب
-
-    c.drawString(col2_x, y, "شیفت روز")
-    c.drawString(col3_x, y, "شیفت شب")
-    y -= 15
+    c.drawString(col2_x, y_table, "شیفت روز")
+    c.drawString(col3_x, y_table, "شیفت شب")
+    y_table -= 14
     c.setFont("Helvetica", 9)
 
     def fmt_len(v):
@@ -129,7 +168,6 @@ def generate_pdf(report_data: dict) -> bytes:
             return ""
         return "، ".join(lst)
 
-    # ردیف‌ها: همان عناوینی که در فرم اصلی هستند
     rows = [
         ("متراژ شروع",        fmt_num(day.get("start"), "متر"),   fmt_num(night.get("start"), "متر")),
         ("متراژ پایان",       fmt_num(day.get("end"), "متر"),     fmt_num(night.get("end"), "متر")),
@@ -141,103 +179,100 @@ def generate_pdf(report_data: dict) -> bytes:
     ]
 
     for label, day_val, night_val in rows:
-        c.drawString(col1_x, y, label + " :")
-        c.drawString(col2_x, y, day_val)
-        c.drawString(col3_x, y, night_val)
-        y -= 14
+        c.drawString(col1_x, y_table, label + " :")
+        c.drawString(col2_x, y_table, day_val)
+        c.drawString(col3_x, y_table, night_val)
+        y_table -= 14
 
-    y -= 5
-    c.line(margin_x, y, width - margin_x, y)
-    y -= 10
+    y_table -= 8
+    c.line(40, y_table, width - 40, y_table)
+    y_table -= 12
 
-    # مسئول / کمکی / سرپرست کارگاه (روز / شب)
+    # نیروی انسانی
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(col1_x, y, "نیروی انسانی:")
-    y -= 14
+    c.drawString(col1_x, y_table, "نیروی انسانی:")
+    y_table -= 14
     c.setFont("Helvetica", 9)
 
-    c.drawString(col1_x, y, "مسئول شیفت روز:")
-    c.drawString(col2_x, y, fmt_list(day.get("supervisors")))
-    y -= 12
+    c.drawString(col1_x, y_table, "مسئول شیفت روز:")
+    c.drawString(col2_x, y_table, fmt_list(day.get("supervisors")))
+    y_table -= 12
 
-    c.drawString(col1_x, y, "پرسنل کمکی روز:")
-    c.drawString(col2_x, y, fmt_list(day.get("helpers")))
-    y -= 12
+    c.drawString(col1_x, y_table, "پرسنل کمکی روز:")
+    c.drawString(col2_x, y_table, fmt_list(day.get("helpers")))
+    y_table -= 12
 
-    c.drawString(col1_x, y, "سرپرست کارگاه روز:")
-    c.drawString(col2_x, y, fmt_list(day.get("workshop_bosses")))
-    y -= 16
+    c.drawString(col1_x, y_table, "سرپرست کارگاه روز:")
+    c.drawString(col2_x, y_table, fmt_list(day.get("workshop_bosses")))
+    y_table -= 16
 
-    c.drawString(col1_x, y, "مسئول شیفت شب:")
-    c.drawString(col3_x, y, fmt_list(night.get("supervisors")))
-    y -= 12
+    c.drawString(col1_x, y_table, "مسئول شیفت شب:")
+    c.drawString(col3_x, y_table, fmt_list(night.get("supervisors")))
+    y_table -= 12
 
-    c.drawString(col1_x, y, "پرسنل کمکی شب:")
-    c.drawString(col3_x, y, fmt_list(night.get("helpers")))
-    y -= 12
+    c.drawString(col1_x, y_table, "پرسنل کمکی شب:")
+    c.drawString(col3_x, y_table, fmt_list(night.get("helpers")))
+    y_table -= 12
 
-    c.drawString(col1_x, y, "سرپرست کارگاه شب:")
-    c.drawString(col3_x, y, fmt_list(night.get("workshop_bosses")))
-    y -= 20
+    c.drawString(col1_x, y_table, "سرپرست کارگاه شب:")
+    c.drawString(col3_x, y_table, fmt_list(night.get("workshop_bosses")))
+    y_table -= 20
 
-    # جمع‌بندی پایین جدول (مجموع متراژ، آب، گازوئیل)
+    # جمع‌بندی
     total_len = (day.get("length") or 0) + (night.get("length") or 0)
     total_water = (day.get("water") or 0) + (night.get("water") or 0)
     total_diesel = (day.get("diesel") or 0) + (night.get("diesel") or 0)
 
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin_x, y, "جمع‌بندی روز:")
-    y -= 14
+    c.drawString(40, y_table, "جمع‌بندی روز:")
+    y_table -= 14
     c.setFont("Helvetica", 9)
-    c.drawString(margin_x, y, f"مجموع متراژ حفاری: {total_len:.2f} متر")
-    y -= 12
-    c.drawString(margin_x, y, f"مجموع آب مصرفی: {total_water:.2f} لیتر")
-    y -= 12
-    c.drawString(margin_x, y, f"مجموع گازوئیل مصرفی: {total_diesel:.2f} لیتر")
-    y -= 20
+    c.drawString(40, y_table, f"مجموع متراژ حفاری: {total_len:.2f} متر")
+    y_table -= 12
+    c.drawString(40, y_table, f"مجموع آب مصرفی: {total_water:.2f} لیتر")
+    y_table -= 12
+    c.drawString(40, y_table, f"مجموع گازوئیل مصرفی: {total_diesel:.2f} لیتر")
+    y_table -= 20
 
-    # کادر بزرگ توضیحات
+    # توضیحات
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin_x, y, "توضیحات:")
-    y -= 10
+    c.drawString(40, y_table, "توضیحات:")
+    y_table -= 10
 
-    box_x = margin_x
-    box_y = margin_y + 70
-    box_w = width - 2 * margin_x
-    box_h = y - box_y
+    box_x = 40
+    box_y = 80
+    box_w = width - 80
+    box_h = y_table - box_y
 
-    # مستطیل توضیحات
-    c.setLineWidth(0.8)
+    c.setLineWidth(0.7)
     c.rect(box_x, box_y, box_w, box_h, stroke=1, fill=0)
 
-    # متن توضیحات (شیفت روز + شیفت شب) داخل کادر
     d_notes = _txt(day.get("notes")).strip()
     n_notes = _txt(night.get("notes")).strip()
 
-    notes_lines = []
+    note_lines = []
     if d_notes:
-        notes_lines.append("شیفت روز:")
-        notes_lines.extend(split_text(d_notes, max_len=110))
-        notes_lines.append("")
+        note_lines.append("شیفت روز:")
+        note_lines.extend(split_text(d_notes, max_len=110))
+        note_lines.append("")
     if n_notes:
-        notes_lines.append("شیفت شب:")
-        notes_lines.extend(split_text(n_notes, max_len=110))
+        note_lines.append("شیفت شب:")
+        note_lines.extend(split_text(n_notes, max_len=110))
 
     c.setFont("Helvetica", 9)
     text_y = box_y + box_h - 16
-    for line in notes_lines:
+    for line in note_lines:
         if text_y < box_y + 10:
             break
         c.drawString(box_x + 8, text_y, line)
         text_y -= 11
 
-    # محل امضاها (خالی می‌گذاریم که دستی پر بشود)
+    # امضاها
     c.setFont("Helvetica", 9)
-    sig_y = margin_y + 30
-    c.drawString(margin_x, sig_y, "امضاء مسئول شیفت روز: .......................")
-    c.drawString(margin_x + 260, sig_y, "امضاء مسئول شیفت شب: .......................")
+    sig_y = 55
+    c.drawString(40, sig_y, "امضاء مسئول شیفت روز: ........................")
+    c.drawString(300, sig_y, "امضاء مسئول شیفت شب: ........................")
 
-    # پایان صفحه
     c.showPage()
     c.save()
     buffer.seek(0)
