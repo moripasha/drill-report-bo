@@ -13,7 +13,7 @@ from bidi.algorithm import get_display
 # ثبت فونت فارسی (Vazirmatn-Regular.ttf در ریشه پروژه)
 # ----------------------------------
 
-# فایل Vazirmatn-Regular.ttf در ریشه ریپو است (همان جایی که main.py هست)
+# فایل Vazirmatn-Regular.ttf در ریشه ریپو است (همان جا که main.py هست)
 pdfmetrics.registerFont(
     TTFont("VazirFA", "Vazirmatn-Regular.ttf")
 )
@@ -28,11 +28,13 @@ FONT_EN = "Helvetica"   # برای متن‌های انگلیسی/عددی
 
 def rtl_text(text: str) -> str:
     """
-    متن فارسی را طوری reshape و bidi می‌کند
-    که حروف به هم چسبیده و جهت راست به چپ شود.
+    متن فارسی را reshape + bidi می‌کند
+    تا حروف به هم چسبیده و راست به چپ نمایش داده شوند.
     """
     if not text:
         return ""
+    # مراقب باشیم متن رو str کنیم
+    text = str(text)
     reshaped = arabic_reshaper.reshape(text)
     bidi = get_display(reshaped)
     return bidi
@@ -74,8 +76,7 @@ def grid_to_xy(col: int, row: int, width: float, height: float,
 
 
 # ----------------------------------
-# موقعیت ۵ فیلد هدر روی فرم (بر اساس مختصات خودت)
-# اگر بعداً دیدیم یکی دو خونه جابه‌جایی لازم است، فقط همین اعداد را عوض می‌کنیم.
+# موقعیت ۵ فیلد هدر روی فرم
 # ----------------------------------
 
 HEADER_POSITIONS = {
@@ -88,7 +89,7 @@ HEADER_POSITIONS = {
         "size": 9,
         "rtl": True,
     },
-    # شماره گمانه – حروف/عدد لاتین → چپ‌چین
+    # شماره گمانه – لاتین → چپ‌چین
     "borehole": {
         "col": 16,
         "row": 8,
@@ -106,7 +107,7 @@ HEADER_POSITIONS = {
         "size": 9,
         "rtl": False,
     },
-    # زاویه – فقط مقدار عددی (مثلاً 40)
+    # زاویه – عدد
     "angle": {
         "col": 40,
         "row": 8,
@@ -115,7 +116,7 @@ HEADER_POSITIONS = {
         "size": 9,
         "rtl": False,
     },
-    # تاریخ – مثلاً 1403/09/15
+    # تاریخ – عدد/اسلش
     "date": {
         "col": 45,
         "row": 8,
@@ -165,7 +166,7 @@ def generate_pdf(report_data: dict) -> bytes:
 
     date_str = _txt(report_data.get("date"))
 
-    # 🔴 فقط مقدارها، بدون تیتر «منطقه»، «شماره گمانه» و ...
+    # فقط مقدارها، بدون تیتر
     header_values = {
         "region": region,
         "borehole": borehole,
@@ -189,6 +190,7 @@ def generate_pdf(report_data: dict) -> bytes:
         font_size = cfg.get("size", 9)
         is_rtl = cfg.get("rtl", False)
 
+        # تبدیل به مختصات
         x, y = grid_to_xy(col, row, width, height)
 
         # اگر فارسی/RTL باشد، reshape + bidi
