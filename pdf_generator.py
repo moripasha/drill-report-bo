@@ -7,6 +7,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 
 import arabic_reshaper
 from bidi.algorithm import get_display
+import re
 
 
 # ----------------------------------
@@ -17,8 +18,8 @@ pdfmetrics.registerFont(
     TTFont("VazirFA", "Vazirmatn-Regular.ttf")
 )
 
-FONT_FA = "VazirFA"         # برای متن‌های فارسی
-FONT_EN = "Helvetica-Bold"  # برای متن‌های انگلیسی/عددی (بولد)
+FONT_FA = "VazirFA"      # برای متن‌های فارسی
+FONT_EN = "Helvetica"    # برای متن‌های لاتین/عدد
 
 
 # ----------------------------------
@@ -75,7 +76,7 @@ def grid_to_xy(col: int, row: int, width: float, height: float,
 
 # ----------------------------------
 # موقعیت ۵ فیلد هدر روی فرم
-# (اگر نیاز شد بعداً فقط این col,row ها را کمی جابه‌جا می‌کنیم)
+# فقط اگر لازم شد جا به جا می‌کنیم
 # ----------------------------------
 
 HEADER_POSITIONS = {
@@ -85,7 +86,7 @@ HEADER_POSITIONS = {
         "row": 8,
         "align": "right",
         "font": FONT_FA,
-        "size": 11,
+        "size": 11,   # بزرگ‌تر از قبل
         "rtl": True,
     },
     # شماره گمانه – لاتین → چپ‌چین
@@ -106,7 +107,7 @@ HEADER_POSITIONS = {
         "size": 11,
         "rtl": False,
     },
-    # زاویه – عدد + کلمه «درجه» → فارسی / RTL / راست‌چین
+    # زاویه – فارسی با «درجه» → راست‌چین و RTL
     "angle": {
         "col": 40,
         "row": 8,
@@ -115,7 +116,7 @@ HEADER_POSITIONS = {
         "size": 11,
         "rtl": True,
     },
-    # تاریخ – فقط اعداد و اسلش، فرمت نهایی: روز/ماه/سال
+    # تاریخ – روز/ماه/سال → چپ‌چین، LTR
     "date": {
         "col": 45,
         "row": 8,
@@ -133,8 +134,8 @@ HEADER_POSITIONS = {
 
 def generate_pdf(report_data: dict) -> bytes:
     """
-    نسخه‌ی تست: فعلاً فقط ۵ فیلد هدر را روی فرم اصلی چاپ می‌کند.
-    report_data همان دیکشنری user_data[user_id] است.
+    فعلاً فقط ۵ فیلد هدر را روی فرم اصلی چاپ می‌کند.
+    report_data همان user_data[user_id] است.
     """
 
     buffer = BytesIO()
@@ -157,36 +158,33 @@ def generate_pdf(report_data: dict) -> bytes:
     borehole_raw = _txt(report_data.get("borehole"))
     rig_raw = _txt(report_data.get("rig"))
 
+    # زاویه: هرچی داده شده، فقط عددش رو نگه می‌داریم
     angle_raw = report_data.get("angle_deg")
     if angle_raw is None:
         angle_raw = report_data.get("angle")
-
-    # تبدیل زاویه به عدد بدون اعشار
     angle_display = ""
     if angle_raw not in (None, ""):
-        try:
-            angle_int = int(float(str(angle_raw).replace(",", ".")))
-            # متن نهایی زاویه: «30 درجه»
-            angle_display = f"{angle_int} درجه"
-        except Exception:
-            # اگر نشد، همان ورودی را می‌گذاریم
-            angle_display = f"{_txt(angle_raw)} درجه"
+        s = _txt(angle_raw)
+        # فقط اولین دنباله رقم‌ها (مثلاً از "30.0" یا "30 درجه" → "30")
+        m = re.search(r"(\d+)", s)
+        if m:
+            angle_display = f"{m.group(1)} درجه"
+        else:
+            # اگر اصلاً عدد پیدا نشد، بی‌خیال می‌شیم
+            angle_display = ""
 
+    # تاریخ: فرض ورودی سال/ماه/روز → خروجی روز/ماه/سال
     date_raw = _txt(report_data.get("date"))
     date_display = date_raw
-    # اگر فرمت شبیه سال/ماه/روز بود، به روز/ماه/سال تبدیل می‌کنیم
     if date_raw and "/" in date_raw:
         parts = date_raw.split("/")
         if len(parts) == 3:
-            # اگر بخش اول 4 رقمی بود، یعنی سال
+            # اگر قسمت اول 4 رقمی بود یعنی سال است
             if len(parts[0]) == 4:
-                y, m, d = parts
-                date_display = f"{d}/{m}/{y}"
-            else:
-                # در غیر این صورت همان را نگه می‌داریم
-                date_display = date_raw
+                y, mth, d = parts
+                date_display = f"{d}/{mth}/{y}"
 
-    # فقط مقدارها، بدون تیتر
+    # فقط مقدارها
     header_values = {
         "region": region_raw,
         "borehole": borehole_raw,
