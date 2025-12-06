@@ -13,13 +13,12 @@ from bidi.algorithm import get_display
 # ثبت فونت فارسی (Vazirmatn-Regular.ttf در ریشه پروژه)
 # ----------------------------------
 
-# فایل Vazirmatn-Regular.ttf در ریشه ریپو است (همان جا که main.py هست)
 pdfmetrics.registerFont(
     TTFont("VazirFA", "Vazirmatn-Regular.ttf")
 )
 
-FONT_FA = "VazirFA"     # برای متن‌های فارسی
-FONT_EN = "Helvetica"   # برای متن‌های انگلیسی/عددی
+FONT_FA = "VazirFA"         # برای متن‌های فارسی
+FONT_EN = "Helvetica-Bold"  # برای متن‌های انگلیسی/عددی (بولد)
 
 
 # ----------------------------------
@@ -33,7 +32,6 @@ def rtl_text(text: str) -> str:
     """
     if not text:
         return ""
-    # مراقب باشیم متن رو str کنیم
     text = str(text)
     reshaped = arabic_reshaper.reshape(text)
     bidi = get_display(reshaped)
@@ -77,6 +75,7 @@ def grid_to_xy(col: int, row: int, width: float, height: float,
 
 # ----------------------------------
 # موقعیت ۵ فیلد هدر روی فرم
+# (اگر نیاز شد بعداً فقط این col,row ها را کمی جابه‌جا می‌کنیم)
 # ----------------------------------
 
 HEADER_POSITIONS = {
@@ -86,7 +85,7 @@ HEADER_POSITIONS = {
         "row": 8,
         "align": "right",
         "font": FONT_FA,
-        "size": 9,
+        "size": 11,
         "rtl": True,
     },
     # شماره گمانه – لاتین → چپ‌چین
@@ -95,7 +94,7 @@ HEADER_POSITIONS = {
         "row": 8,
         "align": "left",
         "font": FONT_EN,
-        "size": 9,
+        "size": 11,
         "rtl": False,
     },
     # دستگاه حفاری – لاتین
@@ -104,25 +103,25 @@ HEADER_POSITIONS = {
         "row": 8,
         "align": "left",
         "font": FONT_EN,
-        "size": 9,
+        "size": 11,
         "rtl": False,
     },
-    # زاویه – عدد
+    # زاویه – عدد + کلمه «درجه» → فارسی / RTL / راست‌چین
     "angle": {
         "col": 40,
         "row": 8,
-        "align": "left",
-        "font": FONT_EN,
-        "size": 9,
-        "rtl": False,
+        "align": "right",
+        "font": FONT_FA,
+        "size": 11,
+        "rtl": True,
     },
-    # تاریخ – عدد/اسلش
+    # تاریخ – فقط اعداد و اسلش، فرمت نهایی: روز/ماه/سال
     "date": {
         "col": 45,
         "row": 8,
         "align": "left",
         "font": FONT_EN,
-        "size": 9,
+        "size": 11,
         "rtl": False,
     },
 }
@@ -148,31 +147,52 @@ def generate_pdf(report_data: dict) -> bytes:
     # -------------------------
     # پس‌زمینه: فرم اصلی به صورت تصویر
     # -------------------------
-    # فایل form_template.jpg باید در ریشه ریپو باشد
     bg = ImageReader("form_template.jpg")
     c.drawImage(bg, 0, 0, width=width, height=height)
 
     # -------------------------
-    # گرفتن مقادیر از report_data
+    # گرفتن مقادیر خام از report_data
     # -------------------------
-    region = _txt(report_data.get("region"))
-    borehole = _txt(report_data.get("borehole"))
-    rig = _txt(report_data.get("rig"))
+    region_raw = _txt(report_data.get("region"))
+    borehole_raw = _txt(report_data.get("borehole"))
+    rig_raw = _txt(report_data.get("rig"))
 
-    angle = report_data.get("angle_deg")
-    if angle is None:
-        angle = report_data.get("angle")
-    angle_val = _txt(angle)
+    angle_raw = report_data.get("angle_deg")
+    if angle_raw is None:
+        angle_raw = report_data.get("angle")
 
-    date_str = _txt(report_data.get("date"))
+    # تبدیل زاویه به عدد بدون اعشار
+    angle_display = ""
+    if angle_raw not in (None, ""):
+        try:
+            angle_int = int(float(str(angle_raw).replace(",", ".")))
+            # متن نهایی زاویه: «30 درجه»
+            angle_display = f"{angle_int} درجه"
+        except Exception:
+            # اگر نشد، همان ورودی را می‌گذاریم
+            angle_display = f"{_txt(angle_raw)} درجه"
+
+    date_raw = _txt(report_data.get("date"))
+    date_display = date_raw
+    # اگر فرمت شبیه سال/ماه/روز بود، به روز/ماه/سال تبدیل می‌کنیم
+    if date_raw and "/" in date_raw:
+        parts = date_raw.split("/")
+        if len(parts) == 3:
+            # اگر بخش اول 4 رقمی بود، یعنی سال
+            if len(parts[0]) == 4:
+                y, m, d = parts
+                date_display = f"{d}/{m}/{y}"
+            else:
+                # در غیر این صورت همان را نگه می‌داریم
+                date_display = date_raw
 
     # فقط مقدارها، بدون تیتر
     header_values = {
-        "region": region,
-        "borehole": borehole,
-        "rig": rig,
-        "angle": angle_val,
-        "date": date_str,
+        "region": region_raw,
+        "borehole": borehole_raw,
+        "rig": rig_raw,
+        "angle": angle_display,
+        "date": date_display,
     }
 
     # -------------------------
@@ -187,10 +207,9 @@ def generate_pdf(report_data: dict) -> bytes:
         row = cfg["row"]
         align = cfg.get("align", "left")
         font_name = cfg.get("font", FONT_EN)
-        font_size = cfg.get("size", 9)
+        font_size = cfg.get("size", 11)
         is_rtl = cfg.get("rtl", False)
 
-        # تبدیل به مختصات
         x, y = grid_to_xy(col, row, width, height)
 
         # اگر فارسی/RTL باشد، reshape + bidi
