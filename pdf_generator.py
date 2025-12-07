@@ -120,7 +120,7 @@ HEADER_POSITIONS = {
         "rtl": False,
     },
     # زاویه – فارسی با «درجه»
-    # بین دو حالت قبلی: کمی به چپ نسبت به آخرین اسکرین قبلی
+    # بین دو حالت قبلی: کمی به چپ
     "angle": {
         "col": 36,
         "row": 8,
@@ -214,7 +214,6 @@ DAY_POSITIONS = {
 
 # ----------------------------------
 # محدودهٔ کادر توضیحات
-# (گوشه‌ها بر اساس مختصات گریدی که دادی)
 # ----------------------------------
 
 DESC_BOX = {
@@ -293,6 +292,24 @@ def build_personnel_line(prefix, supervisor, helpers, boss):
         return ""
 
     return " / ".join(parts)
+
+
+def merge_helpers(vals):
+    flat = []
+    for v in vals:
+        if isinstance(v, (list, tuple, set)):
+            flat.extend([str(x) for x in v if x])
+        else:
+            txt = str(v)
+            if "," in txt:
+                flat.extend([t.strip() for t in txt.split(",") if t.strip()])
+            else:
+                flat.append(txt)
+    out = []
+    for x in flat:
+        if x and x not in out:
+            out.append(x)
+    return out
 
 
 # ----------------------------------
@@ -374,14 +391,15 @@ def generate_pdf(report_data: dict) -> bytes:
 
     # -------------------------
     # شیفت روز – مقادیر عددی
+    # (کلیدها را با چند اسم محتمل می‌خوانیم)
     # -------------------------
-    day_start_val = pick(report_data, "shift_day_start_m")
-    day_end_val   = pick(report_data, "shift_day_end_m")
-    day_len_val   = pick(report_data, "shift_day_advance_m")
+    day_start_val = pick(report_data, "shift_day_start_m", "day_start_m", "day_start")
+    day_end_val   = pick(report_data, "shift_day_end_m", "day_end_m", "day_end")
+    day_len_val   = pick(report_data, "shift_day_advance_m", "day_len_m", "day_len")
     day_size_val  = pick(report_data, "day_size", "shift_day_size")
-    day_mud_val   = pick(report_data, "day_mud_mix")
-    day_water_val = pick(report_data, "day_water_l")
-    day_diesel_val= pick(report_data, "day_diesel_l")
+    day_mud_val   = pick(report_data, "day_mud_mix", "day_mud")
+    day_water_val = pick(report_data, "day_water_l", "day_water")
+    day_diesel_val= pick(report_data, "day_diesel_l", "day_diesel")
 
     day_values = {
         "day_start":  day_start_val,
@@ -459,23 +477,6 @@ def generate_pdf(report_data: dict) -> bytes:
         "site_supervisor",
         "day_boss",
     )
-
-    def merge_helpers(vals):
-        flat = []
-        for v in vals:
-            if isinstance(v, (list, tuple, set)):
-                flat.extend([str(x) for x in v if x])
-            else:
-                txt = str(v)
-                if "," in txt:
-                    flat.extend([t.strip() for t in txt.split(",") if t.strip()])
-                else:
-                    flat.append(txt)
-        out = []
-        for x in flat:
-            if x and x not in out:
-                out.append(x)
-        return out
 
     day_helpers = merge_helpers(day_helpers_values)
     day_person_line = build_personnel_line("روز", day_supervisor, day_helpers, day_boss)
