@@ -19,7 +19,7 @@ pdfmetrics.registerFont(
 )
 
 FONT_FA = "VazirFA"      # برای متن‌های فارسی / ترکیبی
-FONT_EN = "Helvetica"    # برای متن‌های لاتین/عدد
+FONT_EN = "Helvetica"    # برای عدد و حروف لاتین
 
 
 # ----------------------------------
@@ -40,14 +40,6 @@ def _txt(v):
     if v is None:
         return ""
     return str(v)
-
-
-def pick(report_data, *names):
-    """اولین کلید موجود در report_data از بین names را برمی‌گرداند."""
-    for n in names:
-        if n in report_data and report_data[n] not in (None, ""):
-            return report_data[n]
-    return ""
 
 
 # ----------------------------------
@@ -119,8 +111,7 @@ HEADER_POSITIONS = {
         "size": 11,
         "rtl": False,
     },
-    # زاویه – فارسی با «درجه»
-    # بین دو حالت قبلی: کمی به چپ
+    # زاویه – فارسی با «درجه» (بین دو حالت قبلی، کمی به چپ)
     "angle": {
         "col": 36,
         "row": 8,
@@ -129,7 +120,7 @@ HEADER_POSITIONS = {
         "size": 11,
         "rtl": True,
     },
-    # تاریخ – روز/ماه/سال → چپ‌چین، LTR
+    # تاریخ – روز/ماه/سال → چپ‌چین، همون چیزی که تو bot_flow ساختی
     "date": {
         "col": 45,
         "row": 8,
@@ -262,31 +253,23 @@ def draw_rtl_paragraph(c, text, x_right, y_top, width, font_name, font_size, lea
         c.drawRightString(x_right, y, display_line)
 
 
-def build_personnel_line(prefix, supervisor, helpers, boss):
+def build_personnel_line(prefix, supervisors, helpers, bosses):
     """
     خروجی نمونه:
     مسئول شیفت روز: … / پرسنل کمکی: … و … / سرپرست کارگاه: …
     """
     parts = []
-    if supervisor:
-        parts.append(f"مسئول شیفت {prefix}: {supervisor}")
 
-    helpers_list = []
+    if supervisors:
+        sup_txt = "، ".join(supervisors)
+        parts.append(f"مسئول شیفت {prefix}: {sup_txt}")
+
     if helpers:
-        if isinstance(helpers, (list, tuple, set)):
-            helpers_list = [str(h) for h in helpers if h]
-        else:
-            txt = str(helpers)
-            if "," in txt:
-                helpers_list = [t.strip() for t in txt.split(",") if t.strip()]
-            else:
-                helpers_list = [txt]
+        parts.append("پرسنل کمکی: " + " و ".join(helpers))
 
-    if helpers_list:
-        parts.append("پرسنل کمکی: " + " و ".join(helpers_list))
-
-    if boss:
-        parts.append(f"سرپرست کارگاه: {boss}")
+    if bosses:
+        boss_txt = "، ".join(bosses)
+        parts.append(f"سرپرست کارگاه: {boss_txt}")
 
     if not parts:
         return ""
@@ -294,26 +277,9 @@ def build_personnel_line(prefix, supervisor, helpers, boss):
     return " / ".join(parts)
 
 
-def merge_helpers(vals):
-    flat = []
-    for v in vals:
-        if isinstance(v, (list, tuple, set)):
-            flat.extend([str(x) for x in v if x])
-        else:
-            txt = str(v)
-            if "," in txt:
-                flat.extend([t.strip() for t in txt.split(",") if t.strip()])
-            else:
-                flat.append(txt)
-    out = []
-    for x in flat:
-        if x and x not in out:
-            out.append(x)
-    return out
-
-
 # ----------------------------------
 # تولید PDF
+# report_data همان user_data[user_id] است
 # ----------------------------------
 
 def generate_pdf(report_data: dict) -> bytes:
@@ -324,36 +290,34 @@ def generate_pdf(report_data: dict) -> bytes:
     c = canvas.Canvas(buffer, pagesize=page_size)
     width, height = page_size
 
-    # پس‌زمینه: تصویر فرم اصلی
+    # پس‌زمینه: تصویر فرم اصلی (از form_template.jpg)
     bg = ImageReader("form_template.jpg")
     c.drawImage(bg, 0, 0, width=width, height=height)
 
     # -------------------------
     # هدر
     # -------------------------
+
     region_raw = _txt(report_data.get("region"))
     borehole_raw = _txt(report_data.get("borehole"))
     rig_raw = _txt(report_data.get("rig"))
 
-    # زاویه: فقط عدد + «درجه»
+    # زاویه: فقط عدد صحیح + «درجه»
     angle_raw = report_data.get("angle_deg")
-    if angle_raw is None:
-        angle_raw = report_data.get("angle")
     angle_display = ""
     if angle_raw not in (None, ""):
-        s = _txt(angle_raw)
-        m = re.search(r"(\d+)", s)
-        if m:
-            angle_display = f"{m.group(1)} درجه"
+        try:
+            angle_int = int(float(angle_raw))
+            angle_display = f"{angle_int} درجه"
+        except ValueError:
+            # اگر ورودی عجیب بود، سعی می‌کنیم عدد از داخلش دربیاریم
+            s = _txt(angle_raw)
+            m = re.search(r"(\d+)", s)
+            if m:
+                angle_display = f"{m.group(1)} درجه"
 
-    # تاریخ: اگر ورودی سال/ماه/روز بود → روز/ماه/سال
-    date_raw = _txt(report_data.get("date"))
-    date_display = date_raw
-    if date_raw and "/" in date_raw:
-        parts = date_raw.split("/")
-        if len(parts) == 3 and len(parts[0]) == 4:
-            y, mth, d = parts
-            date_display = f"{d}/{mth}/{y}"
+    # تاریخ: همون مقداری که bot_flow ساخته (روز/ماه/سال)
+    date_display = _txt(report_data.get("date"))
 
     header_values = {
         "region": region_raw,
@@ -390,16 +354,20 @@ def generate_pdf(report_data: dict) -> bytes:
             c.drawString(x, y, text)
 
     # -------------------------
-    # شیفت روز – مقادیر عددی
-    # (کلیدها را با چند اسم محتمل می‌خوانیم)
+    # شیفت روز – بر اساس ساختار user_data["shifts"]["day"]
     # -------------------------
-    day_start_val = pick(report_data, "shift_day_start_m", "day_start_m", "day_start")
-    day_end_val   = pick(report_data, "shift_day_end_m", "day_end_m", "day_end")
-    day_len_val   = pick(report_data, "shift_day_advance_m", "day_len_m", "day_len")
-    day_size_val  = pick(report_data, "day_size", "shift_day_size")
-    day_mud_val   = pick(report_data, "day_mud_mix", "day_mud")
-    day_water_val = pick(report_data, "day_water_l", "day_water")
-    day_diesel_val= pick(report_data, "day_diesel_l", "day_diesel")
+
+    shifts = report_data.get("shifts", {})
+    day_shift = shifts.get("day", {}) if isinstance(shifts, dict) else {}
+
+    day_start_val = day_shift.get("start")
+    day_end_val   = day_shift.get("end")
+    day_len_val   = day_shift.get("length")
+    day_size_val  = day_shift.get("size")
+    day_mud_list  = day_shift.get("mud") or []
+    day_mud_val   = " + ".join(day_mud_list) if day_mud_list else ""
+    day_water_val = day_shift.get("water")
+    day_diesel_val= day_shift.get("diesel")
 
     day_values = {
         "day_start":  day_start_val,
@@ -419,6 +387,7 @@ def generate_pdf(report_data: dict) -> bytes:
         s = _txt(raw_val)
         unit = cfg.get("unit", "")
 
+        # واحد را اگر نیست، اضافه کن
         if unit and unit.strip() not in s:
             s = s + unit
 
@@ -444,77 +413,30 @@ def generate_pdf(report_data: dict) -> bytes:
             c.drawString(x, y, text)
 
     # -------------------------
-    # توضیحات + پرسنل
+    # توضیحات + پرسنل روز/شب داخل کادر توضیحات
     # -------------------------
 
-    day_desc   = pick(report_data, "day_description", "day_desc", "day_notes")
-    night_desc = pick(report_data, "night_description", "night_desc", "night_notes")
+    night_shift = shifts.get("night", {}) if isinstance(shifts, dict) else {}
 
-    # پرسنل شیفت روز
-    day_supervisor = pick(
-        report_data,
-        "day_supervisor",
-        "shift_day_supervisor",
-        "day_shift_leader",
-    )
+    # توضیحات خام
+    day_desc   = _txt(day_shift.get("notes") or "")
+    night_desc = _txt(night_shift.get("notes") or "")
 
-    day_helpers_values = []
-    for key in [
-        "day_helpers",
-        "day_helpers_list",
-        "shift_day_helpers",
-        "day_helper_1",
-        "day_helper_2",
-        "shift_day_helper_1",
-        "shift_day_helper_2",
-    ]:
-        if key in report_data and report_data[key]:
-            day_helpers_values.append(report_data[key])
+    # پرسنل روز
+    day_sup = day_shift.get("supervisors") or []
+    day_helpers = day_shift.get("helpers") or []
+    day_bosses = day_shift.get("workshop_bosses") or []
+    day_person_line = build_personnel_line("روز", day_sup, day_helpers, day_bosses)
 
-    day_boss = pick(
-        report_data,
-        "workshop_boss",
-        "site_supervisor",
-        "day_boss",
-    )
+    # پرسنل شب
+    night_sup = night_shift.get("supervisors") or []
+    night_helpers = night_shift.get("helpers") or []
+    night_bosses = night_shift.get("workshop_bosses") or []
+    night_person_line = build_personnel_line("شب", night_sup, night_helpers, night_bosses)
 
-    day_helpers = merge_helpers(day_helpers_values)
-    day_person_line = build_personnel_line("روز", day_supervisor, day_helpers, day_boss)
-
-    # پرسنل شیفت شب
-    night_supervisor = pick(
-        report_data,
-        "night_supervisor",
-        "shift_night_supervisor",
-        "night_shift_leader",
-    )
-
-    night_helpers_values = []
-    for key in [
-        "night_helpers",
-        "night_helpers_list",
-        "shift_night_helpers",
-        "night_helper_1",
-        "night_helper_2",
-        "shift_night_helper_1",
-        "shift_night_helper_2",
-    ]:
-        if key in report_data and report_data[key]:
-            night_helpers_values.append(report_data[key])
-
-    night_boss = pick(
-        report_data,
-        "workshop_boss",
-        "site_supervisor",
-        "night_boss",
-    )
-
-    night_helpers = merge_helpers(night_helpers_values)
-    night_person_line = build_personnel_line("شب", night_supervisor, night_helpers, night_boss)
-
-    # متن نهایی هر شیفت = توضیحات + خط پرسنل
+    # متن کامل هر شیفت = توضیحات + خط پرسنل
     day_block = ""
-    if day_desc:
+    if day_desc.strip():
         day_block = day_desc.strip()
     if day_person_line:
         if day_block:
@@ -523,7 +445,7 @@ def generate_pdf(report_data: dict) -> bytes:
             day_block = day_person_line
 
     night_block = ""
-    if night_desc:
+    if night_desc.strip():
         night_block = night_desc.strip()
     if night_person_line:
         if night_block:
@@ -531,7 +453,7 @@ def generate_pdf(report_data: dict) -> bytes:
         else:
             night_block = night_person_line
 
-    # رسم داخل کادر توضیحات
+    # مختصات کادر توضیحات
     (col_tr, row_tr) = DESC_BOX["top_right"]
     (col_tl, row_tl) = DESC_BOX["top_left"]
     (col_br, row_br) = DESC_BOX["bottom_right"]
@@ -546,6 +468,7 @@ def generate_pdf(report_data: dict) -> bytes:
     font_size  = DESC_BOX["size"]
     leading    = DESC_BOX["leading"]
 
+    # فقط روز یا فقط شب یا هر دو
     if day_block and not night_block:
         draw_rtl_paragraph(
             c,
