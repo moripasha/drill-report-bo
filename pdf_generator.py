@@ -1,191 +1,329 @@
-# pdf_generator.py
-import os
 
+# pdf_generator.py
+# -*- coding: utf-8 -*-
+
+import os
+import math
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib.utils import ImageReader
 
-import arabic_reshaper
-from bidi.algorithm import get_display
-
-# -------------------------------
-# تنظیمات صفحه و گرید
-# -------------------------------
-
-PAGE_SIZE = landscape(A4)
-PAGE_WIDTH, PAGE_HEIGHT = PAGE_SIZE
-
-# گرید ذهنی (بر اساس تقسیم‌بندی ۵ میلی‌متری توی فرم کاغذی)
-GRID_COLS = 50   # ستون از راست به چپ
-GRID_ROWS = 60   # ردیف از بالا به پایین
-MARGIN_X = 20
-MARGIN_Y = 20
+# برای فارسیِ چسبیده
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+except Exception:
+    arabic_reshaper = None
+    get_display = None
 
 
-def grid_to_xy(col: float, row: float):
-    """
-    col: ستون از سمت راست (۰ یعنی نزدیک‌ترین ستون به لبه‌ی راست فرم)
-    row: ردیف از بالا
-    خروجی: مختصات x, y در PDF
-    """
-    cell_w = (PAGE_WIDTH - 2 * MARGIN_X) / GRID_COLS
-    cell_h = (PAGE_HEIGHT - 2 * MARGIN_Y) / GRID_ROWS
+# =========================
+# تنظیمات اصلی
+# =========================
 
-    # مبدأ از گوشه‌ی بالا-چپ صفحه است ولی ما محور x را از راست در نظر گرفته‌ایم
-    x = PAGE_WIDTH - MARGIN_X - (col + 0.5) * cell_w
-    y = PAGE_HEIGHT - MARGIN_Y - (row + 0.5) * cell_h
-    return x, y
+GRID_MM = 5.0  # گرید شما: هر خانه 5 میلی‌متر
+MM_TO_PT = 72.0 / 25.4  # 1mm -> points
 
+# آفست خیلی مهمه (کالیبراسیون). چون ممکنه عکس/پی‌دی‌اف قالب حاشیه داشته باشه.
+# فعلاً این دو تا رو روی صفر گذاشتم؛ اگر 1-2 خانه جابجاست، فقط این دو تا رو تغییر بده.
+OFFSET_X_MM = 0.0  # + یعنی نوشته‌ها کمی به چپ می‌روند (چون مبدا راست است)
+OFFSET_Y_MM = 0.0  # + یعنی نوشته‌ها کمی پایین می‌آیند
 
-# -------------------------------
-# فونت و نوشتن فارسی
-# -------------------------------
-
+# فونت
+FONT_FILE = "Vazirmatn-Regular.ttf"
 FONT_NAME = "Vazirmatn"
 
+# قالب پس‌زمینه (بهتر: JPG)
+TEMPLATE_IMAGE = "form_template.jpg"
 
-def register_font():
-    if FONT_NAME in pdfmetrics.getRegisteredFontNames():
-        return
-    font_path = os.path.join(os.path.dirname(__file__), "Vazirmatn-Regular.ttf")
-    pdfmetrics.registerFont(TTFont(FONT_NAME, font_path))
+# سایز صفحه (A4 landscape)
+PAGE_W, PAGE_H = landscape(A4)
+
+# دیباگ گرید (برای تست)
+DEBUG_DRAW_GRID = False
 
 
-def fa_shape(text: str) -> str:
-    """شکل‌دهی و bidi برای فارسی/مخلوط"""
+# =========================
+# ابزارهای متن
+# =========================
+
+def _mm(v: float) -> float:
+    return v * MM_TO_PT
+
+def _shape_fa(text: str) -> str:
+    """فارسی را چسبیده و درست RTL می‌کند."""
+    if text is None:
+        return ""
+    text = str(text)
     if not text:
         return ""
+    if arabic_reshaper is None or get_display is None:
+        # اگر پکیج‌ها نصب نبود، حداقل متن را برگردان
+        return text
     reshaped = arabic_reshaper.reshape(text)
     return get_display(reshaped)
 
-
-def draw_fa(c: canvas.Canvas, x: float, y: float, text: str, size: int = 12):
-    """نوشتن متن فارسی (یا مخلوط) با سایز مشخص"""
-    c.setFont(FONT_NAME, size)
-    shaped = fa_shape(text)
-    c.drawString(x, y, shaped)
-
-
-def draw_en(c: canvas.Canvas, x: float, y: float, text: str, size: int = 12):
-    """نوشتن متن انگلیسی/عدد ساده بدون reshaper"""
-    c.setFont(FONT_NAME, size)
-    c.drawString(x, y, str(text))
-
-
-# -------------------------------
-# مختصات فیلدها روی فرم
-# -------------------------------
-
-# هدر (مختصات براساس گریدی که قبلاً تعیین کرده بودیم)
-POS_REGION = (5, 8)     # منطقه
-POS_BOREHOLE = (16, 8)  # شماره گمانه
-POS_RIG = (31, 8)       # دستگاه حفاری
-POS_ANGLE = (38, 8)     # زاویه
-POS_DATE = (45, 8)      # تاریخ
-
-# ستون شیفت روز در جدول پارامترهای حفاری
-# اگر دیدی هنوز یک ستون چپ/راست است، فقط این عدد را یکی دو واحد کم/زیاد کن.
-DAY_COL = 11
-
-POS_DAY_START = (DAY_COL, 11)    # متراژ شروع
-POS_DAY_END = (DAY_COL, 12.3)    # متراژ پایان
-POS_DAY_LEN = (DAY_COL, 13.3)    # متراژ هر شیفت
-POS_DAY_SIZE = (DAY_COL, 14.3)   # سایز حفاری
-POS_DAY_MUD = (DAY_COL, 15.3)    # نوع گل حفاری
-POS_DAY_WATER = (DAY_COL, 16.3)  # آب مصرفی
-POS_DAY_DIESEL = (DAY_COL, 17.3) # گازوئیل
-
-
-def format_mud_list(muds):
-    if not muds:
+def _num_no_decimal(v):
+    """عدد را بدون اعشار چاپ می‌کند."""
+    if v is None:
         return ""
-    return " + ".join(muds)
+    try:
+        f = float(str(v).replace(",", "."))
+        i = int(round(f))
+        return str(i)
+    except Exception:
+        return str(v)
 
-
-# -------------------------------
-# تابع اصلی تولید PDF
-# -------------------------------
-
-def generate_pdf(report_data: dict, output_path: str = "daily_drilling_report.pdf") -> str:
+def grid_xy(col: float, row: float):
     """
-    report_data همان user_data[user_id] در bot_flow.py است.
+    تبدیل مختصات گرید به مختصات PDF.
+    مبدا: بالا راست (0,0) در گوشه صفحه
+    col به سمت چپ زیاد می‌شود، row به سمت پایین زیاد می‌شود.
     """
-    register_font()
-    c = canvas.Canvas(output_path, pagesize=PAGE_SIZE)
+    x_mm = (col * GRID_MM) + OFFSET_X_MM
+    y_mm = (row * GRID_MM) + OFFSET_Y_MM
 
-    # پس‌زمینه‌ی فرم
-    template_jpg = os.path.join(os.path.dirname(__file__), "form_template.jpg")
-    if os.path.exists(template_jpg):
-        bg = ImageReader(template_jpg)
-        c.drawImage(bg, 0, 0, width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    x = PAGE_W - _mm(x_mm)
+    y = PAGE_H - _mm(y_mm)
+    return x, y
 
-    # ------------ هدر ------------
-    region = report_data.get("region") or ""
-    borehole = report_data.get("borehole") or ""
-    rig = report_data.get("rig") or ""
-    angle = report_data.get("angle_deg")
-    date_str = report_data.get("date") or ""
+def draw_text(c: canvas.Canvas, col, row, text, font_size=12, bold=False, align="right"):
+    """
+    align:
+      - right: نقطه داده شده، سمت راست متن باشد
+      - left:  نقطه داده شده، سمت چپ متن باشد
+      - center: وسط
+    """
+    if text is None:
+        return
 
-    if region:
-        x, y = grid_to_xy(*POS_REGION)
-        draw_fa(c, x, y, str(region), size=13)
+    s = str(text).strip()
+    if not s:
+        return
 
-    if borehole:
-        x, y = grid_to_xy(*POS_BOREHOLE)
-        # شماره گمانه معمولاً انگلیسی است
-        draw_en(c, x, y, borehole, size=13)
+    # فارسی/عربی را شکل بده
+    s2 = _shape_fa(s)
 
-    if rig:
-        x, y = grid_to_xy(*POS_RIG)
-        draw_en(c, x, y, rig, size=13)
+    c.setFont(FONT_NAME, font_size)
 
-    if angle is not None:
-        x, y = grid_to_xy(*POS_ANGLE)
-        txt = f"{int(round(angle))} درجه"
-        draw_fa(c, x, y, txt, size=13)
+    x, y = grid_xy(col, row)
+    w = c.stringWidth(s2, FONT_NAME, font_size)
 
-    if date_str:
-        x, y = grid_to_xy(*POS_DATE)
-        # تاریخ به صورت روز/ماه/سال از bot_flow می‌آید
-        draw_en(c, x, y, date_str, size=13)
+    if align == "right":
+        c.drawString(x - w, y, s2)
+    elif align == "center":
+        c.drawString(x - (w / 2.0), y, s2)
+    else:  # left
+        c.drawString(x, y, s2)
 
-    # ------------ شیفت روز در جدول پارامترها ------------
+def wrap_text_lines(text: str, max_width_pt: float, font_size: float):
+    """متن را بر اساس عرض مجاز line-wrap می‌کند."""
+    if not text:
+        return []
+
+    t = str(text).replace("\r\n", "\n").replace("\r", "\n")
+    raw_lines = t.split("\n")
+    out = []
+
+    for raw in raw_lines:
+        raw = raw.strip()
+        if not raw:
+            out.append("")
+            continue
+
+        # جداکننده‌ی ساده‌ی کلمات
+        words = raw.split(" ")
+        line = ""
+        for w in words:
+            cand = (line + " " + w).strip()
+            cand_shaped = _shape_fa(cand)
+            if pdfmetrics.stringWidth(cand_shaped, FONT_NAME, font_size) <= max_width_pt:
+                line = cand
+            else:
+                if line:
+                    out.append(line)
+                line = w
+        if line:
+            out.append(line)
+
+    return out
+
+
+# =========================
+# تولید PDF
+# =========================
+
+def generate_pdf(report_data: dict, output_path: str):
+    """
+    report_data ساختار همان user_data است.
+    """
+    # فونت را رجیستر کن
+    if FONT_NAME not in pdfmetrics.getRegisteredFontNames():
+        if not os.path.exists(FONT_FILE):
+            raise FileNotFoundError(f"Font file not found: {FONT_FILE}")
+        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+
+    c = canvas.Canvas(output_path, pagesize=(PAGE_W, PAGE_H))
+
+    # پس‌زمینه
+    if not os.path.exists(TEMPLATE_IMAGE):
+        raise FileNotFoundError(f"Template image not found: {TEMPLATE_IMAGE}")
+
+    c.drawImage(TEMPLATE_IMAGE, 0, 0, width=PAGE_W, height=PAGE_H, mask="auto")
+
+    # گرید دیباگ
+    if DEBUG_DRAW_GRID:
+        c.setLineWidth(0.2)
+        step = _mm(GRID_MM)
+        # خطوط عمودی
+        x = 0
+        while x <= PAGE_W:
+            c.line(x, 0, x, PAGE_H)
+            x += step
+        # خطوط افقی
+        y = 0
+        while y <= PAGE_H:
+            c.line(0, y, PAGE_W, y)
+            y += step
+
+    # -----------------------
+    # هدر (مختصات شما)
+    # -----------------------
+    # توجه: اینجا فقط مقدار چاپ می‌شود، نه "region:" و غیره
+    # مختصات: RGN 5,8  BH 16,8  RIG 31,8  ANG 40,8  DATE 45,8
+
+    region = report_data.get("region", "")
+    borehole = report_data.get("borehole", "")
+    rig = report_data.get("rig", "")
+    ang = report_data.get("angle_deg", "")
+    date = report_data.get("date", "")
+
+    draw_text(c, 5, 8, region, font_size=13, align="right")
+    draw_text(c, 16, 8, borehole, font_size=13, align="center")  # گمانه معمولاً وسط بهتره
+    draw_text(c, 31, 8, rig, font_size=13, align="center")
+
+    # زاویه: فقط عدد + " درجه" و یکم راست‌تر
+    ang_txt = ""
+    if ang not in (None, ""):
+        ang_txt = f"{_num_no_decimal(ang)} درجه"
+    # اینجا col رو کمی کمتر می‌کنیم یعنی به راست نزدیک‌تر (چون مبدا راست است)
+    draw_text(c, 39.2, 8, ang_txt, font_size=13, align="center")
+
+    # تاریخ: روز/ماه/سال (همون چیزی که خودت گفتی)
+    draw_text(c, 45, 8, date, font_size=13, align="center")
+
+    # -----------------------
+    # مقادیر شیفت روز (مختصات جدید شما)
+    # -----------------------
+    # D start 14,11
+    # D end   14,12.3
+    # D len   14,13.3
+    # D size  14,14.3
+    # D mud   14,15.3
+    # D water 14,15.8
+    # D diesel14,17.2
+
     shifts = report_data.get("shifts", {})
     day = shifts.get("day", {})
+    night = shifts.get("night", {})
 
+    # اگر شیفت روز وجود دارد
     if day.get("start") is not None:
-        x, y = grid_to_xy(*POS_DAY_START)
-        draw_fa(c, x, y, f"{day['start']} متر")
+        draw_text(c, 14, 11, _num_no_decimal(day.get("start")), font_size=12, align="center")
+        draw_text(c, 14, 12.3, _num_no_decimal(day.get("end")), font_size=12, align="center")
+        draw_text(c, 14, 13.3, _num_no_decimal(day.get("length")), font_size=12, align="center")
+        draw_text(c, 14, 14.3, str(day.get("size") or ""), font_size=12, align="center")
 
-    if day.get("end") is not None:
-        x, y = grid_to_xy(*POS_DAY_END)
-        draw_fa(c, x, y, f"{day['end']} متر")
+        mud = day.get("mud") or []
+        mud_txt = " + ".join(mud) if mud else ""
+        # گل‌ها معمولاً طولانی میشن؛ کمی کوچکتر
+        draw_text(c, 14, 15.3, mud_txt, font_size=10.5, align="center")
 
-    if day.get("length") is not None:
-        x, y = grid_to_xy(*POS_DAY_LEN)
-        draw_fa(c, x, y, f"{day['length']:.2f} متر")
+        draw_text(c, 14, 15.8, _num_no_decimal(day.get("water")), font_size=12, align="center")
+        draw_text(c, 14, 17.2, _num_no_decimal(day.get("diesel")), font_size=12, align="center")
 
-    if day.get("size"):
-        x, y = grid_to_xy(*POS_DAY_SIZE)
-        draw_en(c, x, y, str(day["size"]))
+    # -----------------------
+    # توضیحات + پرسنل (باکس شما)
+    # باکس: TR 28,11  TL 54,11  BR 28,25  BL 54,25
+    # -----------------------
+    box_tr = (28, 11)
+    box_tl = (54, 11)
+    box_br = (28, 25)
+    box_bl = (54, 25)
 
-    mud_text = format_mud_list(day.get("mud") or [])
-    if mud_text:
-        x, y = grid_to_xy(*POS_DAY_MUD)
-        draw_fa(c, x, y, mud_text)
+    # عرض و ارتفاع باکس به points
+    x_right, y_top = grid_xy(box_tr[0], box_tr[1])
+    x_left, _ = grid_xy(box_tl[0], box_tl[1])
+    _, y_bottom = grid_xy(box_br[0], box_br[1])
 
-    if day.get("water") is not None:
-        x, y = grid_to_xy(*POS_DAY_WATER)
-        draw_fa(c, x, y, f"{day['water']} لیتر")
+    box_w = abs(x_left - x_right)
+    box_h = abs(y_top - y_bottom)
 
-    if day.get("diesel") is not None:
-        x, y = grid_to_xy(*POS_DAY_DIESEL)
-        draw_fa(c, x, y, f"{day['diesel']} لیتر")
+    # پدینگ داخل باکس
+    pad = _mm(2)  # 2mm
+    usable_w = box_w - 2 * pad
 
-    # فعلاً توضیحات و پرسنل را روی فرم نمی‌ریزیم
-    # تا مطمئن شویم ستون‌ها و متن‌ها کاملاً درست شده‌اند.
+    # اگر شیفت شب هم باشد، باکس را نصف کن
+    has_day = bool(day.get("start") is not None)
+    has_night = bool(night.get("start") is not None)
+
+    # فونت توضیحات
+    notes_font = 11.5
+    line_h = notes_font * 1.35
+
+    def draw_notes_block(block_top_y, block_bottom_y, shift_key):
+        sh = shifts.get(shift_key, {})
+        notes = (sh.get("notes") or "").strip()
+
+        # متن توضیحات
+        lines = wrap_text_lines(notes, usable_w, notes_font)
+
+        # شروع نوشتن از بالا به پایین
+        cur_y = block_top_y - pad - notes_font
+        for ln in lines:
+            if cur_y < block_bottom_y + pad + (line_h * 2):
+                break
+            # داخل باکس از سمت راست، align right
+            # برای draw_text ما col/row می‌خواهد؛ اینجا مستقیم drawString می‌زنیم دقیق‌تر:
+            s = _shape_fa(ln)
+            w = pdfmetrics.stringWidth(s, FONT_NAME, notes_font)
+            c.setFont(FONT_NAME, notes_font)
+            c.drawString(x_right + pad + (usable_w - w), cur_y, s)
+            cur_y -= line_h
+
+        # خط پرسنل (پایین هر باکس)
+        sup = "، ".join(sh.get("supervisors") or [])
+        helpers = "، ".join(sh.get("helpers") or [])
+        bosses = "، ".join(sh.get("workshop_bosses") or [])
+
+        people_line = f"مسئول شیفت: {sup or '-'} / پرسنل کمکی: {helpers or '-'} / سرپرست کارگاه: {bosses or '-'}"
+        people_line_s = _shape_fa(people_line)
+        c.setFont(FONT_NAME, 10.5)
+
+        # پایینِ باکس
+        py = block_bottom_y + pad
+        pw = pdfmetrics.stringWidth(people_line_s, FONT_NAME, 10.5)
+        if pw > usable_w:
+            # اگر خیلی طولانی شد، کوچیک‌تر
+            c.setFont(FONT_NAME, 9.5)
+            pw = pdfmetrics.stringWidth(people_line_s, FONT_NAME, 9.5)
+
+        c.drawString(x_right + pad + (usable_w - pw), py, people_line_s)
+
+    # محاسبه محدوده باکس
+    top_y = max(y_top, y_bottom)
+    bottom_y = min(y_top, y_bottom)
+
+    if has_day and has_night:
+        mid_y = (top_y + bottom_y) / 2.0
+        # روز بالا، شب پایین
+        draw_notes_block(top_y, mid_y, "day")
+        draw_notes_block(mid_y, bottom_y, "night")
+    elif has_day:
+        draw_notes_block(top_y, bottom_y, "day")
+    elif has_night:
+        draw_notes_block(top_y, bottom_y, "night")
 
     c.showPage()
     c.save()
