@@ -1,3 +1,5 @@
+from pdf_generator import generate_pdf
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -667,30 +669,51 @@ def build_full_preview(user_id: int) -> str:
     return "\n".join(lines)
 
 
+
 async def finish_shifts_callback(query, user_id):
     user_states[user_id] = STEP_DONE
+
     summary = build_shifts_summary(user_id)
     preview = build_full_preview(user_id)
 
     await query.edit_message_text(summary, parse_mode="Markdown")
     await query.message.reply_text(preview)
-    await query.message.reply_text(
-        "✅ گزارش ثبت شد.\n"
-        "در نسخهٔ بعدی، تولید و ارسال PDF روی قالب فرم هم اضافه می‌شود."
+
+    # ====== تولید PDF ======
+    pdf_path = f"daily_drilling_report_{user_id}.pdf"
+    generate_pdf(user_data[user_id], pdf_path)
+
+    await query.message.reply_document(
+        document=open(pdf_path, "rb"),
+        filename=os.path.basename(pdf_path)
     )
+
+    await query.message.reply_text("✅ PDF گزارش ساخته و ارسال شد.")
+
+
+
 
 
 async def finish_shifts_text(update, user_id):
     user_states[user_id] = STEP_DONE
+
     summary = build_shifts_summary(user_id)
     preview = build_full_preview(user_id)
 
     await update.message.reply_text(summary, parse_mode="Markdown")
     await update.message.reply_text(preview)
-    await update.message.reply_text(
-        "✅ گزارش ثبت شد.\n"
-        "در نسخهٔ بعدی، تولید و ارسال PDF روی قالب فرم هم اضافه می‌شود."
+
+    # ====== تولید PDF ======
+    pdf_path = f"daily_drilling_report_{user_id}.pdf"
+    generate_pdf(user_data[user_id], pdf_path)
+
+    await update.message.reply_document(
+        document=open(pdf_path, "rb"),
+        filename=os.path.basename(pdf_path)
     )
+
+    await update.message.reply_text("✅ PDF گزارش ساخته و ارسال شد.")
+
 
 
 # ==========================
